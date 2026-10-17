@@ -67,20 +67,16 @@ with tab_answer:
         st.subheader(rt.recommendation(check, table))
 
         d3 = rt.same_meaning(table, level=4, crop=crop)
-        loss = table[table.level == 4].set_index("state_alpha")["mean_loss"]
         c1, c2, c3 = st.columns(3)
-        ia, ne = loss.get("IA"), loss.get("NE")
-        c1.metric("Iowa D3 loss", f"{ia:.1f}%" if ia is not None else "n/a")
-        c2.metric("Nebraska D3 loss", f"{ne:.1f}%" if ne is not None else "n/a")
-        c3.metric("Gap", f"{ia - ne:.1f} pts" if ia is not None and ne is not None else "n/a")
-        if isinstance(d3, str):
-            st.write(d3)
+        c1.metric("Iowa D3 loss", f"{d3['ia']:.1f}%")
+        c2.metric("Nebraska D3 loss", f"{d3['ne']:.1f}%")
+        c3.metric("Gap", f"{d3['gap']:.1f} pts",
+                  "same within tolerance" if d3["same"] else "differs", delta_color="off")
 
-        bars = table.assign(label=table.level.map(LEVEL_LABELS))
         fig = px.bar(
-            bars, x="label", y="mean_loss", color="state_alpha", barmode="group",
-            category_orders={"label": [LEVEL_LABELS[l] for l in LEVELS]},
-            labels={"label": "Drought level", "mean_loss": "Mean yield anomaly (%)", "state_alpha": "State"},
+            table, x="level_label", y="mean_loss", color="state_alpha", barmode="group",
+            category_orders={"level_label": [LEVEL_LABELS[l] for l in LEVELS]},
+            labels={"level_label": "Drought level", "mean_loss": "Mean yield anomaly (%)", "state_alpha": "State"},
             hover_data=["n"],
         )
         st.plotly_chart(fig, width="stretch")
@@ -94,12 +90,13 @@ with tab_check:
     try:
         check = rt.backtest(view, anom)
         s = rt.score(check)
-        c1, c2 = st.columns(2)
-        c1.metric(f"Cells within {TOL_PTS:g} pts", f"{s['pct_within']:.0f}%")
-        c2.metric("Weighted mean error", f"{s['weighted_mean_error']:.1f} pts")
+        c1, c2, c3 = st.columns(3)
+        c1.metric(f"Cells within {TOLERANCE_PTS:g} pts", f"{s['share_within_tol']:.0%}")
+        c2.metric("Weighted mean error", f"{s['weighted_mae']:.1f} pts")
+        c3.metric("Cells scored", f"{s['cells_scored']} of {len(check)}")
 
         def colour(row):
-            if row.n < MIN_CELL_N:
+            if not row.enough_rows:
                 bg = "#e0e0e0"
             elif row.within_tol:
                 bg = "#d4edda"
@@ -107,19 +104,20 @@ with tab_check:
                 bg = "#f8d7da"
             return [f"background-color: {bg}"] * len(row)
 
-        shown = check.assign(level=check.level.map(LEVEL_LABELS))
+        shown = check.drop(columns=["crop", "level"])
         st.dataframe(shown.style.apply(colour, axis=1), width="stretch", hide_index=True)
-        st.caption(f"Green: within {TOL_PTS:g} points. Red: missed. Grey: fewer than {MIN_CELL_N} county-years, not scored.")
+        st.caption(f"Green: within {TOLERANCE_PTS:g} points. Red: missed. Grey: fewer than {MIN_CELL_N} rows in a period, not scored.")
 
         fig = px.scatter(
-            shown, x="train_mean", y="test_mean", color="state_alpha", text="level",
+            shown.dropna(subset=["train_mean", "test_mean"]), x="train_mean", y="test_mean",
+            color="state_alpha", text="level_label",
             labels={"train_mean": "2000–2012 mean (%)", "test_mean": "2013–2025 mean (%)", "state_alpha": "State"},
         )
         lo = float(min(shown.train_mean.min(), shown.test_mean.min())) - 2
         hi = float(max(shown.train_mean.max(), shown.test_mean.max())) + 2
-        fig.add_trace(go.Scatter(x=[lo, hi, hi, lo], y=[lo + TOL_PTS, hi + TOL_PTS, hi - TOL_PTS, lo - TOL_PTS],
+        fig.add_trace(go.Scatter(x=[lo, hi, hi, lo], y=[lo + TOLERANCE_PTS, hi + TOLERANCE_PTS, hi - TOLERANCE_PTS, lo - TOLERANCE_PTS],
                                  fill="toself", fillcolor="rgba(128,128,128,0.15)", line_width=0,
-                                 name=f"±{TOL_PTS:g} pts", hoverinfo="skip"))
+                                 name=f"±{TOLERANCE_PTS:g} pts", hoverinfo="skip"))
         fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(dash="dash", color="grey"),
                                  name="y = x"))
         fig.update_traces(textposition="top center", selector=dict(mode="markers+text"))
@@ -137,7 +135,7 @@ with tab_why:
     if "timing" in view:
         st.subheader("Peak-season vs early drought")
         try:
-            t = rt.build_table(view, TRAIN_YEARS + TEST_YEARS, anom, extra_by=["timing"])
+            t = rt.build_table(view, (TRAIN_YEARS[0], TEST_YEARS[1]), anom, extra_by=["timing"])
             t = t[(t.level == 4) & t.timing.isin(["early", "peak"])]
             fig = px.bar(t, x="state_alpha", y="mean_loss", color="timing", barmode="group",
                          labels={"state_alpha": "State", "mean_loss": "Mean yield anomaly at D3 (%)"},
@@ -155,10 +153,9 @@ with tab_why:
             ne = view[view.state_alpha == "NE"]
             t = rt.build_table(ne, TRAIN_YEARS, anom, extra_by=["irrig_group"])
             t = t[t.irrig_group.isin(["mostly irrigated", "mostly dryland"])]
-            t = t.assign(label=t.level.map(LEVEL_LABELS))
-            fig = px.bar(t, x="label", y="mean_loss", color="irrig_group", barmode="group",
-                         category_orders={"label": [LEVEL_LABELS[l] for l in LEVELS]},
-                         labels={"label": "Drought level", "mean_loss": "Mean yield anomaly (%)",
+            fig = px.bar(t, x="level_label", y="mean_loss", color="irrig_group", barmode="group",
+                         category_orders={"level_label": [LEVEL_LABELS[l] for l in LEVELS]},
+                         labels={"level_label": "Drought level", "mean_loss": "Mean yield anomaly (%)",
                                  "irrig_group": "County group"},
                          hover_data=["n"])
             st.plotly_chart(fig, width="stretch")
@@ -171,7 +168,7 @@ with tab_why:
 
 with tab_about:
     try:
-        st.dataframe(data_prep.coverage_report(view), width="stretch", hide_index=True)
+        st.dataframe(data_prep.coverage_report(view).reset_index(), width="stretch", hide_index=True)
     except NotImplementedError:
         st.info(COMING_SOON)
 
