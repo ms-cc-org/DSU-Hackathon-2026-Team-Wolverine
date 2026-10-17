@@ -114,7 +114,7 @@ The biggest miss is the same with either trend: **Iowa at D3**. In 2000–2012 i
 |---|---|---|
 | Tolu Adeola | [@lod23](https://github.com/lod23) | Shared code skeleton, Streamlit app, integration and merges, README |
 | Ralph Reyes | [@RRR-Reyes](https://github.com/RRR-Reyes) | Analysis panel, strict trend, reality table and backtest |
-| Connor | [@GAMEMONKEI](https://github.com/GAMEMONKEI) | Drought timing and irrigation groups; problem statement |
+| Connor Little | [@GAMEMONKEI](https://github.com/GAMEMONKEI) | Drought timing and irrigation groups; problem statement |
 
 ## AI disclosure
 
