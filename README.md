@@ -132,6 +132,7 @@ We used AI tools as described below and checked every number against the data be
 
 **Connor (drought timing and irrigation)**
 - **What:** `wolverine/drought_timing.py`, written to the specification in [`docs/team/CONNOR.md`](docs/team/CONNOR.md).
+- **AI use:** Connor used an AI assistant while writing this module. Its output was accepted only after the checks below.
 - **How it was checked:** the four checks from that specification were run on the merged code:
   1. one row per county, crop and year (9,984 rows, no duplicates), and `timing` only takes the values none, early, peak or late;
   2. Iowa corn in 2012: all 99 counties are labelled `peak`, as expected for the July 2012 drought;
