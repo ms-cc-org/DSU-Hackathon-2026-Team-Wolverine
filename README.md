@@ -123,7 +123,7 @@ We used AI tools as described below and checked every number against the data be
 **Tolu (app and integration)**
 - **Tool:** Claude Code (Claude Opus 5.5).
 - **What for:** creating the shared module skeleton (`contracts.py` and the function stubs); writing `wolverine_app.py` and `scripts/smoke_check.py`; merging Ralph's and Connor's branches and fitting the app to their outputs; drafting this README.
-- **How it was checked:** the app was run headlessly with Streamlit's test runner at each stage: with the stubs only, with stand-in functions, and with the real modules for both crops, with no errors. Every README number was recomputed from the merged code and matched against Ralph's notes (82%, 2.4 pts, Iowa corn D3 −17.4 / −3.9). Before merging Connor's code, we confirmed the irrigated share is a 0–1 fraction and that the weekly D0–D4 percentages are non-overlapping.
+- **How it was checked:** the app was run headlessly with Streamlit's test runner at each stage: with the stubs only, with stand-in functions, and with the real modules for both crops, with no errors. Every README number was recomputed from the merged code and matched against Ralph's notes (both crops combined on the master trend: 82% within 4 points, 2.4 pts; Iowa corn D3 −17.4 / −3.9). Before merging Connor's code, we confirmed the irrigated share is a 0–1 fraction and that the weekly D0–D4 percentages are non-overlapping.
 
 **Ralph (data prep and reality table)**
 - **Tool:** Claude Code (Claude Opus 5.5).
