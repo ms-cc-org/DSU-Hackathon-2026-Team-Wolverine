@@ -80,7 +80,7 @@ This is the sentence the app shows for corn on the master trend, its default vie
 
 **On the master trend, 82% of scored cells held up within 4 points, for corn and for soybeans.**
 
-Each crop has 12 cells (2 states × 6 drought levels). A cell is scored only when it has at least 20 rows in both periods, which leaves 11 per crop (the Iowa D4 cell is too thin). The weighted mean error weights each cell by its 2013–2025 row count. Every row below matches the "Did it hold up?" tab for that crop and trend.
+Each crop has 12 cells (2 states × 6 drought levels). A cell is scored only when it has at least 10 rows in both periods, which leaves 11 per crop (the Iowa D4 cell has only 5 training rows). The weighted mean error weights each cell by its 2013–2025 row count. Every row below matches the "Did it hold up?" tab for that crop and trend.
 
 | Crop | Trend version | Cells within 4 pts | Weighted mean error |
 |---|---|---|---|
