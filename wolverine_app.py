@@ -40,7 +40,7 @@ panel, load_notes = load_all()
 
 st.sidebar.header("Settings")
 crop = st.sidebar.radio("Crop", CROPS, format_func=str.title)
-version = st.sidebar.radio("Trend version", ["Strict trend (2000–2012 only)", "Master trend (all years)"])
+version = st.sidebar.radio("Trend version", ["Master trend (all years)", "Strict trend (2000–2012 only)"])
 strict = version.startswith("Strict")
 if strict and STRICT_ANOM not in panel:
     st.sidebar.warning("Strict trend not ready, showing the master trend.")
@@ -159,7 +159,7 @@ with tab_why:
                                  "irrig_group": "County group"},
                          hover_data=["n"])
             st.plotly_chart(fig, width="stretch")
-            st.caption("Irrigation data ends 2018; each county gets one average irrigated share.")
+            st.caption("Irrigation data runs 2000–2018; each county gets one average irrigated share.")
         except NotImplementedError:
             st.info(COMING_SOON)
 
@@ -178,7 +178,7 @@ with tab_about:
         "- County yields come from NASS surveys; small counties drop out in some years.\n"
         "- The strict trend is fitted on 2000–2012 only, so 2013–2025 is a real out-of-sample check. "
         "The master trend uses all years and flatters the check.\n"
-        "- Irrigation shares end in 2018 and are averaged to one value per county."
+        "- Irrigation shares run 2000–2018 and are averaged to one value per county."
     )
     st.subheader("Credits")
     st.markdown(
