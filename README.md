@@ -131,7 +131,12 @@ We used AI tools as described below and checked every number against the data be
 - **How it was checked:** the Iowa corn D3 cell reproduces the planned values exactly (train −17.4, test −3.9). He checked Polk County 2012 and the per-county training means by hand. He confirmed the 2012 slope effect by refitting each Iowa county's trend with and without 2012. Full notes: [`docs/team/ralph_notes.md`](docs/team/ralph_notes.md).
 
 **Connor (drought timing and irrigation)**
-- *TODO (Connor): tool used, what for, and how it was checked. `connor_notes.md` was not in the repo when this README was written.*
+- **What:** `wolverine/drought_timing.py`, written to the specification in [`docs/team/CONNOR.md`](docs/team/CONNOR.md).
+- **How it was checked:** the four checks from that specification were run on the merged code:
+  1. one row per county, crop and year (9,984 rows, no duplicates), and `timing` only takes the values none, early, peak or late;
+  2. Iowa corn in 2012: all 99 counties are labelled `peak`, as expected for the July 2012 drought;
+  3. the worst weekly level over each season matches the master's `max_drought_severity` for 100% of 9,620 county-crop-years, so the level rule is right;
+  4. Nebraska counties per irrigation group: corn 59 mostly irrigated and 32 mostly dryland; soybeans 48 and 32.
 
 ## Data and credits
 
