@@ -4,7 +4,7 @@
 
 **Who it's for.** Corn and soybean farmers in Iowa and Nebraska. When the U.S. Drought Monitor puts their county in a drought level, they need to decide how much yield loss to plan for: for example, how much grain to sell ahead of harvest, or what to confirm with their crop insurance agent.
 
-**The problem.** The Drought Monitor uses the same labels everywhere, but the same label does not cost the same yield. In 2000–2012, extreme drought (D3) cut Iowa corn yields by 17.4% below trend, but Nebraska corn by only 6.0%. The loss also depends on whether the field is irrigated and on when the drought hits.
+**The problem.** The U.S. Drought Monitor rates every county each week, from no drought, through D0 (abnormally dry), up to D4 (exceptional drought). A "D3" in Iowa and a "D3" in Nebraska carry the same label. Do they cost a corn or soybean farmer the same share of their yield? No. In 2000–2012, extreme drought (D3) cut Iowa corn yields by 17.4% below trend, but Nebraska corn by only 6.0%. The loss also depends on whether the field is irrigated and on when the drought hits.
 
 **Our solution, and how we know it works.** The farmer dashboard lets a farmer pick their county, crop, acres and a drought level, and shows what past droughts like it did to yields there, in percent and in bushels. Behind it is a drought level → yield loss table we built on 2000–2012 and then tested on 2013–2025, years it never saw: **82% of the table's cells landed within 4 points** of what actually happened, for corn and for soybeans.
 
@@ -77,7 +77,7 @@ The analysis uses **8,708 county-crop-years** (190 counties, Iowa and Nebraska, 
 
 ### The recommendation
 
-> D3 cost Iowa corn −17.4% vs Nebraska −6.0% in 2000–2012: use state-specific triggers, and trust only the table cells that held up in 2013–2025 (82% did).
+> Don't read the drought map the same way in every state: at D3, plan for about a 17% yield loss on Iowa corn but about 6% in Nebraska (much less on irrigated land). These estimates held up on 2013–2025: about 4 in 5 of the table's cells (82%) landed within 4 points.
 
 | Crop | Iowa at D3 | Nebraska at D3 | Gap | Same within 4 points? |
 |---|---|---|---|---|
