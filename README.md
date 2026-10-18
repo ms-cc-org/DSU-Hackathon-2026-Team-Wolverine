@@ -8,7 +8,7 @@ The U.S. Drought Monitor rates every county each week, from no drought, through 
 
 **The problem.** No, the same label does not cost the same yield. In 2000–2012, extreme drought (D3) cut Iowa corn yields by 17.4% below trend, but Nebraska corn by only 6.0%. The loss also depends on whether the field is irrigated and on when the drought hits.
 
-**Our solution, and how we know it works.** The farmer dashboard lets a farmer pick their state, county, crop, acres and a drought level, and shows what that drought level cost yields in their state in 2000–2012, in percent and in bushels on their acres, with a plain verdict on whether the estimate held up in 2013–2025. Behind it is a drought level → yield loss table we built on 2000–2012 and then tested on 2013–2025, years it never saw: **82% of the table's cells landed within 4 points** of what actually happened, for corn and for soybeans.
+**Our solution, and how we know it works.** The farmer dashboard lets a farmer pick their state, county, crop, acres and a drought level, and shows what that drought level cost yields in their state in 2000–2012, in percent and in tons (corn) or bushels (soybeans) on their acres, with a plain verdict on whether the estimate held up in 2013–2025. Behind it is a drought level → yield loss table we built on 2000–2012 and then tested on 2013–2025, years it never saw: **82% of the table's cells landed within 4 points** of what actually happened, for corn and for soybeans.
 
 ## Minimum deliverable
 
@@ -55,10 +55,11 @@ To check that all the parts fit together: `python scripts/smoke_check.py` (print
 | Step 3 | Choose a drought level. The dashboard shows the expected yield change for the farmer's state and crop (for Nebraska, the irrigated or dryland group), typical vs expected bushels per acre, bushels at risk on the farmer's acres, and whether that estimate held up on 2013–2025 |
 | Step 4 | Did it hold up? The share of estimates within 4 points, the average miss, and a level-by-level check for the farmer's state. A panel for the data-curious has every cell for both states, the train-vs-test scatter and a switch to the strict trend |
 | Step 5 | Why the states differ: peak-season vs early D3 drought, and Nebraska irrigated vs dryland counties |
-| Step 6 | Practical steps (insurance, water, the weekly drought map, risky weeks, storage and marketing, the county extension office), each filled in with the farmer's own numbers |
+| Step 6 | Six questions the data answers (drought and yield, soil water storage in Iowa, Nebraska sorghum vs corn, rainfall in Iowa vs California, extreme-heat days, soil quality vs drought), each with a hover button that explains how the answer was worked out |
+| Step 7 | Practical steps (insurance, water, the weekly drought map, risky weeks, storage and marketing, the county extension office), each filled in with the farmer's own numbers |
 | About the numbers | County-years behind each number, limitations and credits |
 
-The estimates are the evidence app's table: the average yield change at that drought level in 2000–2012 for the farmer's state and crop (for Nebraska, the irrigated or dryland county group). Every estimate is shown with its 2013–2025 check. Bushels use the farmer's county trend yield (its recent reported yield for counties with no trend).
+The estimates are the evidence app's table: the average yield change at that drought level in 2000–2012 for the farmer's state and crop (for Nebraska, the irrigated or dryland county group). Every estimate is shown with its 2013–2025 check. Yield amounts use the farmer's county trend yield (its recent reported yield for counties with no trend). Corn is shown in tons per acre (a bushel of shelled corn is 56 pounds and a ton is 2,000 pounds, so tons = bushels × 0.028); soybeans stay in bushels per acre.
 
 ### What the evidence app shows
 
