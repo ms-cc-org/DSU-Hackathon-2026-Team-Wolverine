@@ -2,9 +2,11 @@
 
 **Team Wolverine** · Data to Harvest Hackathon, Delaware State University, October 17–18, 2026 · Direction: Drought Category Reality Check
 
-**Who it's for.** Corn and soybean farmers in Iowa and Nebraska. When the U.S. Drought Monitor puts their county in a drought level, they need to decide how much yield loss to plan for: for example, how much grain to sell ahead of harvest, or what to confirm with their crop insurance agent.
+The U.S. Drought Monitor rates every county each week, from no drought, through D0 (abnormally dry), up to D4 (exceptional drought). A "D3" in Iowa and a "D3" in Nebraska carry the same label. Do they cost a corn or soybean farmer the same share of their yield?
 
-**The problem.** The U.S. Drought Monitor rates every county each week, from no drought, through D0 (abnormally dry), up to D4 (exceptional drought). A "D3" in Iowa and a "D3" in Nebraska carry the same label. Do they cost a corn or soybean farmer the same share of their yield? No. In 2000–2012, extreme drought (D3) cut Iowa corn yields by 17.4% below trend, but Nebraska corn by only 6.0%. The loss also depends on whether the field is irrigated and on when the drought hits.
+**User:** corn and soybean farmers in Iowa and Nebraska. When the Drought Monitor puts their county in a drought level, they need to decide how much yield loss to plan for: for example, how much grain to sell ahead of harvest, or what to confirm with their crop insurance agent.
+
+**The problem.** No, the same label does not cost the same yield. In 2000–2012, extreme drought (D3) cut Iowa corn yields by 17.4% below trend, but Nebraska corn by only 6.0%. The loss also depends on whether the field is irrigated and on when the drought hits.
 
 **Our solution, and how we know it works.** The farmer dashboard lets a farmer pick their county, crop, acres and a drought level, and shows what past droughts like it did to yields there, in percent and in bushels. Behind it is a drought level → yield loss table we built on 2000–2012 and then tested on 2013–2025, years it never saw: **82% of the table's cells landed within 4 points** of what actually happened, for corn and for soybeans.
 
