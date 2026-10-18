@@ -1,6 +1,6 @@
-# Drought Yield Estimator
+# Drought Category Reality Check
 
-**Team Wolverine** · Data to Harvest Hackathon, Delaware State University, October 17–18, 2026 · Direction: Drought Category Reality Check
+**Team Wolverine** · Data to Harvest Hackathon, Delaware State University, October 17–18, 2026 · Farmer dashboard and evidence app
 
 The U.S. Drought Monitor rates every county each week, from no drought, through D0 (abnormally dry), up to D4 (exceptional drought). A "D3" in Iowa and a "D3" in Nebraska carry the same label. Do they cost a corn or soybean farmer the same share of their yield?
 
@@ -8,7 +8,7 @@ The U.S. Drought Monitor rates every county each week, from no drought, through 
 
 **The problem.** No, the same label does not cost the same yield. In 2000–2012, extreme drought (D3) cut Iowa corn yields by 17.4% below trend, but Nebraska corn by only 6.0%. The loss also depends on whether the field is irrigated and on when the drought hits.
 
-**Our solution, and how we know it works.** The farmer dashboard lets a farmer pick their county, crop, acres and a drought level, and shows what past droughts like it did to yields there, in percent and in bushels. Behind it is a drought level → yield loss table we built on 2000–2012 and then tested on 2013–2025, years it never saw: **82% of the table's cells landed within 4 points** of what actually happened, for corn and for soybeans.
+**Our solution, and how we know it works.** The farmer dashboard lets a farmer pick their state, county, crop, acres and a drought level, and shows what that drought level cost yields in their state in 2000–2012, in percent and in bushels on their acres, with a plain verdict on whether the estimate held up in 2013–2025. Behind it is a drought level → yield loss table we built on 2000–2012 and then tested on 2013–2025, years it never saw: **82% of the table's cells landed within 4 points** of what actually happened, for corn and for soybeans.
 
 ## Minimum deliverable
 
@@ -48,15 +48,17 @@ To check that all the parts fit together: `python scripts/smoke_check.py` (print
 
 | Page | What the farmer sees |
 |---|---|
-| Welcome | What the tool is for, the story in three parts (drought levels, the yield each level costs, how timing and irrigation change it), and the size of the data |
+| Welcome | The question (same drought label, same yield loss?), the story in three parts (drought levels, what D3 cost each state, how water and timing explain the gap), and the size of the data |
 | Sign in | A demo sign-in. It only gates the demo; it is not real security |
 | Dashboard, step 1 | Pick state, county, acres and crop. Nebraska farmers also say whether the field is irrigated or rain-only |
-| Step 2 | Every year of the county's yield against its trend line, coloured by that year's worst drought level, with a summary of the county's drought years and its hardest year |
-| Step 3 | Choose a drought level (and, from D2 up, when the dry spell would hit). The dashboard shows the expected yield change, typical vs expected bushels per acre, and bushels at risk on the farmer's acres, with the range from past years |
-| Step 4 | Loss at each drought level, loss by drought timing, and (Nebraska) irrigated vs dryland counties |
-| Step 5 | Practical steps: insurance, water, the weekly drought map, storage and marketing, the county extension office |
+| Step 2 | The answer: the one-sentence recommendation, Iowa and Nebraska at D3 and the gap between them, and the yield change at every drought level for both states (2000–2012) |
+| Step 3 | Choose a drought level. The dashboard shows the expected yield change for the farmer's state and crop (for Nebraska, the irrigated or dryland group), typical vs expected bushels per acre, bushels at risk on the farmer's acres, and whether that estimate held up on 2013–2025 |
+| Step 4 | Did it hold up? The share of estimates within 4 points, the average miss, and a level-by-level check for the farmer's state. A panel for the data-curious has every cell for both states, the train-vs-test scatter and a switch to the strict trend |
+| Step 5 | Why the states differ: peak-season vs early D3 drought, and Nebraska irrigated vs dryland counties |
+| Step 6 | Practical steps (insurance, water, the weekly drought map, risky weeks, storage and marketing, the county extension office), each filled in with the farmer's own numbers |
+| About the numbers | County-years behind each number, limitations and credits |
 
-The estimate averages past years at the same drought level, starting with the farmer's own county (at least 5 matching years) and widening to the state (at least 10) when the county has too few.
+The estimates are the evidence app's table: the average yield change at that drought level in 2000–2012 for the farmer's state and crop (for Nebraska, the irrigated or dryland county group). Every estimate is shown with its 2013–2025 check. Bushels use the farmer's county trend yield (its recent reported yield for counties with no trend).
 
 ### What the evidence app shows
 
@@ -106,8 +108,7 @@ The biggest miss is **Iowa at D3**: −17.4% in 2000–2012, −3.9% in 2013–2
 
 ## Limitations
 
-- **The dashboard's estimates are averages of past years, not forecasts, and are not backtested themselves.** They use all years, 2000–2025. The 82% check applies to the evidence table, which keeps 2013–2025 separate.
-- **"No drought" means slightly different things on the dashboard, and each label says which.** The drought-level slider's "No drought" is no drought at all; the county summary compares drought years with years of no drought or only D0; the timing chart's "No severe drought" means nothing at D2 or worse.
+- **The dashboard's estimates are state-level averages of past years, not forecasts.** They are the evidence table's 2000–2012 averages, shown next to their 2013–2025 check. They do not vary by county; only the bushels do, through the county's typical yield.
 - **2012 dominates the training years.** 61% of Iowa corn's D3-and-worse training years (51% for soybeans, 29% in Nebraska) are from 2012.
 - **The strict trend is unreliable for Iowa corn.** On the strict trend, Iowa corn scores worst (55% of cells within 4 points) because the 2012 drought flattens its 2000–2012 trend line (median slope 0.64 bu/ac/yr with 2012, 2.02 without), so 2013–2025 looks better than it was. Soybeans are not affected.
 - **The master trend sees the test years.** It is fitted on all 26 years, so its scores are somewhat flattering. That is why we also report the strict trend.
@@ -146,7 +147,7 @@ We used AI tools as described below and checked every number against the data be
 
 **Edaijah (farmer dashboard)**
 - **Tool:** Claude (Claude Sonnet 5.5), credited as co-author on her commits.
-- **What for:** building the login page and the farmer drought yield dashboard; adding the welcome page, colour palette theme, crop icons and drought level legend; redesigning the dashboard into a story layout with farm photography, and drought timing and irrigation drawn from the data.
+- **What for:** building the login page and the farmer drought yield dashboard; adding the welcome page, colour palette theme, crop icons and drought level legend; redesigning the dashboard into a story layout with farm photography; then rebuilding it on the team's analysis (the reality table, its 2013–2025 check, drought timing and irrigation) in plain language for farmers, and renaming it Drought Category Reality Check.
 - **How it was checked:** *TODO (Edaijah): how you checked the dashboard's numbers and pages.* After merging, Tolu ran the welcome, sign-in and dashboard pages headlessly for both states and both crops with no errors.
 
 ## Data and credits
