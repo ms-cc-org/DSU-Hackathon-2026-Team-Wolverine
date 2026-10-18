@@ -8,6 +8,7 @@ pyarrow==25.0.1         # parquet read/write
 #app
 streamlit==1.65.0
 plotly==7.1.0           # interactive charts in streamlit
+pillow>=10.0            # DroughtLens page icon, and scripts/make_logo_assets.py
 matplotlib==3.11.2      # static charts, pandas df.plot()
 
 #modelling

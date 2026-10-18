@@ -12,3 +12,5 @@ test.py
 suggestions.md
 .vscode
 .ipynb_checkpoints/
+# Farmers fields and plans saved by DroughtLens (stay on the server)
+app_data/
