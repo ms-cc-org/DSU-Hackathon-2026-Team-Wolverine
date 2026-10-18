@@ -28,6 +28,18 @@ The Streamlit app has four tabs:
 
 The sidebar picks the crop and the trend version. The app opens on the master trend; the strict trend is a robustness check (see [Limitations](#limitations)).
 
+### The farmer dashboard (Drought Yield Estimator)
+
+`dashboard_app.py` is the landing page for farmers. It has three pages:
+
+| Page | What it does |
+|---|---|
+| Welcome | What the tool is for, with a **Get started** button |
+| Login | Demo sign-in (username `demo`, password `demo`). It only gates the demo; it is not real security |
+| Dashboard | The farmer picks state, county, acres, crop and drought level, and optionally drought timing and irrigation. The dashboard averages the yield change in past years that match, starting with the farmer's county and widening to the state when the county has too few matching years |
+
+It uses the same data and the team's drought timing and irrigation groups (`wolverine/drought_timing.py`).
+
 ## How to run it
 
 Needs Python 3.11 or newer (3.12 recommended). From the repo root:
@@ -41,6 +53,15 @@ streamlit run wolverine_app.py
 
 The app opens in your browser at http://localhost:8501. The data ships with the repo; no API keys are needed.
 
+To open the farmer dashboard instead:
+
+```bash
+streamlit run dashboard_app.py                       # or, alongside the main app:
+streamlit run dashboard_app.py --server.port 8502
+```
+
+Both apps use the colour theme in `.streamlit/config.toml`.
+
 To check that all the parts fit together:
 
 ```bash
@@ -51,7 +72,10 @@ python scripts/smoke_check.py      # prints the backtest score, then SMOKE OK
 
 | File | What it does |
 |---|---|
-| `wolverine_app.py` | The Streamlit app |
+| `wolverine_app.py` | The Streamlit app: the table, its check and the recommendation |
+| `dashboard_app.py` | The farmer dashboard: welcome, login and yield estimator pages |
+| `assets/` | Photos used by the dashboard (USDA and NRCS, public domain) |
+| `.streamlit/config.toml` | Colour theme shared by both apps |
 | `wolverine/contracts.py` | Shared settings: states, crops, year ranges, tolerance, column names |
 | `wolverine/data_prep.py` | Builds the analysis panel and the strict anomaly |
 | `wolverine/reality_table.py` | The loss table, the 2013–2025 backtest, the score and the recommendation |
@@ -115,6 +139,7 @@ The biggest miss is the same with either trend: **Iowa at D3**. In 2000–2012 i
 | Tolu Adeola | [@lod23](https://github.com/lod23) | Shared code skeleton, Streamlit app, integration and merges, README |
 | Ralph Reyes | [@RRR-Reyes](https://github.com/RRR-Reyes) | Analysis panel, strict trend, reality table and backtest |
 | Connor Little | [@GAMEMONKEI](https://github.com/GAMEMONKEI) | Drought timing and irrigation groups; problem statement |
+| Edaijah Rodriguez | [@daejadoll](https://github.com/daejadoll) | Landing page and farmer dashboard: welcome and login pages, colour theme, photos, yield estimator |
 
 ## AI disclosure
 
@@ -122,7 +147,7 @@ We used AI tools as described below and checked every number against the data be
 
 **Tolu (app and integration)**
 - **Tool:** Claude Code (Claude Opus 5.5).
-- **What for:** creating the shared module skeleton (`contracts.py` and the function stubs); writing `wolverine_app.py` and `scripts/smoke_check.py`; merging Ralph's and Connor's branches and fitting the app to their outputs; drafting this README.
+- **What for:** creating the shared module skeleton (`contracts.py` and the function stubs); writing `wolverine_app.py` and `scripts/smoke_check.py`; merging Ralph's and Connor's branches and fitting the app to their outputs; testing the merged dashboard; drafting this README.
 - **How it was checked:** the app was run headlessly with Streamlit's test runner at each stage: with the stubs only, with stand-in functions, and with the real modules for both crops, with no errors. Every README number was recomputed from the merged code and matched against Ralph's notes (both crops combined on the master trend: 82% within 4 points, 2.4 pts; Iowa corn D3 −17.4 / −3.9). Before merging Connor's code, we confirmed the irrigated share is a 0–1 fraction and that the weekly D0–D4 percentages are non-overlapping.
 
 **Ralph (data prep and reality table)**
@@ -138,6 +163,10 @@ We used AI tools as described below and checked every number against the data be
   2. Iowa corn in 2012: all 99 counties are labelled `peak`, as expected for the July 2012 drought;
   3. the worst weekly level over each season matches the master's `max_drought_severity` for 100% of 9,620 county-crop-years, so the level rule is right;
   4. Nebraska counties per irrigation group: corn 59 mostly irrigated and 32 mostly dryland; soybeans 48 and 32.
+
+**Edaijah (landing page and farmer dashboard)**
+- **What:** `dashboard_app.py`, the photos in `assets/` and the theme in `.streamlit/config.toml`.
+- **How it was checked:** after merging, the welcome, login and dashboard pages were run headlessly with Streamlit's test runner, for both states and both crops, with no errors; the smoke check still prints SMOKE OK.
 
 ## Data and credits
 
