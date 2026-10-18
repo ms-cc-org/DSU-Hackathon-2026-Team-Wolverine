@@ -6,6 +6,16 @@ The U.S. Drought Monitor puts every county in a drought level from D0 (abnormall
 
 This tool answers that with 26 years of county yield and drought records. Its answer: **no**.
 
+## The solution for farmers
+
+A corn or soybean farmer in Iowa or Nebraska opens the **farmer dashboard**, picks their county, crop, acres and the drought level their county is facing, and sees **how much yield past droughts like it cost farms like theirs**. That lets them plan before harvest: crop insurance, marketing, and whether to hold grain or buy feed.
+
+What the evidence tells them:
+- **Read drought levels with your own state's numbers.** Extreme drought (D3) cost Iowa corn about 17% of its yield in 2000–2012, but Nebraska corn about 6%.
+- **Irrigation changes the picture.** In Nebraska at D3, dryland corn lost about 18%, much like Iowa, while irrigated corn lost about 1%.
+- **When the drought hits matters.** Nearly all D3 seasons had drought in July–August, when corn pollinates and soybeans fill pods; Iowa corn lost about 12.5% in those seasons.
+- **The numbers are tested.** Built on 2000–2012 and checked on 2013–2025: 82% of the table's scored cells held up within 4 points, for corn and soybeans (see [Results](#results)).
+
 ## What the tool does and who it's for
 
 **User:** corn and soybean farmers in Iowa and Nebraska, and the state drought task forces whose drought triggers they rely on.
@@ -166,6 +176,7 @@ We used AI tools as described below and checked every number against the data be
 
 **Edaijah (landing page and farmer dashboard)**
 - **What:** `dashboard_app.py`, the photos in `assets/` and the theme in `.streamlit/config.toml`.
+- **AI use:** Edaijah used an AI assistant while building the landing page. Its output was accepted only after the checks below.
 - **How it was checked:** after merging, the welcome, login and dashboard pages were run headlessly with Streamlit's test runner, for both states and both crops, with no errors; the smoke check still prints SMOKE OK.
 
 ## Data and credits
