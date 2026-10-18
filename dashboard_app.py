@@ -220,6 +220,29 @@ def get_data():
     return df
 
 
+def level_loss(df, state, crop, level, irrig=None):
+    """Average yield loss (%) at one drought level for a state and crop. state=None uses both states."""
+    rows = df[(df["crop"] == crop) & (df["level"] == level)]
+    if state:
+        rows = rows[rows["state_alpha"] == state]
+    if irrig:
+        rows = rows[rows["irrig_group"] == irrig]
+    return -rows["yield_anomaly_pct"].mean() if len(rows) >= MIN_STATE_N else None
+
+
+def timing_means(df, crop, state=None):
+    """Average yield change vs trend by drought timing (none / early / peak / late)."""
+    rows = df[df["crop"] == crop]
+    if state:
+        rows = rows[rows["state_alpha"] == state]
+    return rows.groupby("timing")["yield_anomaly_pct"].mean()
+
+
+def loss_text(v):
+    """'5% loss' or '3% gain' for a loss value in percent."""
+    return f"{abs(v):.0f}% {'loss' if v > 0 else 'gain'}"
+
+
 def estimate(df, state, county, crop, level, timing=None, irrig=None):
     """Average yield change vs trend in past years at this drought level.
 
@@ -277,12 +300,16 @@ def show_welcome():
     ia = -sev[(sev.state_alpha == "IA") & (sev.crop == "CORN")]["yield_anomaly_pct"].mean()
     ne = -sev[(sev.state_alpha == "NE") & (sev.crop == "CORN")]["yield_anomaly_pct"].mean()
 
+    tm = timing_means(df, "CORN")
+    dry, wet = level_loss(df, "NE", "CORN", 4, "mostly dryland"), level_loss(df, "NE", "CORN", 4, "mostly irrigated")
+    step3 = (f"Corn hit by drought in July and August has run {tm['peak']:+.0f}% against trend, versus {tm['early']:+.0f}% when drought comes in May and June. "
+             f"At extreme drought (D3), Nebraska dryland corn had a {loss_text(dry)} and irrigated corn a {loss_text(wet)}.")
     chapter("The story in three parts")
     html(f"""
     <div class="steps">
       <div class="step"><div class="k">1</div><b>Drought comes in levels</b>The U.S. Drought Monitor rates every county each week, from abnormally dry (D0) to exceptional (D4).</div>
       <div class="step"><div class="k">2</div><b>Each level costs yield</b>In Iowa, extreme drought (D3 or worse) has cut corn yields about {ia:.0f}% below trend. In Nebraska, about {ne:.0f}%.</div>
-      <div class="step"><div class="k">3</div><b>Timing and water change the answer</b>A dry July hurts corn more than a dry June. Irrigated Nebraska fields lose far less than dryland fields.</div>
+      <div class="step"><div class="k">3</div><b>Timing and water change the answer</b>{step3}</div>
     </div>
     """)
     html(f"""
@@ -336,7 +363,7 @@ def layout(fig, height=340):
 
 
 def show_dashboard():
-    with st.spinner("Loading 26 years of drought and yield records..."):
+    with st.spinner("Loading drought and yield records..."):
         try:
             df = get_data()
         except Exception as exc:  # data files missing or a module not merged yet
@@ -375,8 +402,10 @@ def show_dashboard():
 
     irrig = None
     if state == "NE":
-        choice = st.radio("How is this field watered?", list(IRRIG_CHOICES), horizontal=True,
-                          help="About half of Nebraska cropland is irrigated. Dryland fields feel drought much harder.")
+        d_loss, i_loss = (level_loss(df, "NE", crop, 4, g) for g in ("mostly dryland", "mostly irrigated"))
+        irrig_help = (f"At extreme drought (D3), Nebraska {CROP_NAMES[crop].lower()} had a {loss_text(d_loss)} in dryland counties "
+                      f"and a {loss_text(i_loss)} in irrigated counties.") if d_loss is not None and i_loss is not None else None
+        choice = st.radio("How is this field watered?", list(IRRIG_CHOICES), horizontal=True, help=irrig_help)
         irrig = IRRIG_CHOICES[choice]
 
     county_short = county.replace(" County", "")
@@ -431,11 +460,16 @@ def show_dashboard():
 
     timing = None
     if level >= 3:
-        t_choice = st.radio("When would the dry spell hit?", list(TIMING_CHOICES), horizontal=True,
-                            help="Corn is most sensitive in July, when it tassels and silks.")
+        tmeans = timing_means(df, crop, state)
+        have = "has" if crop == "CORN" else "have"
+        timing_help = (f"{CROP_NAMES[crop]} in {STATE_NAMES[state]} {have} averaged {tmeans['peak']:+.0f}% against trend when severe drought hit in "
+                       f"July and August, {tmeans['early']:+.0f}% when it hit in May and June, and {tmeans['late']:+.0f}% when it came in September or later."
+                       ) if {"peak", "early", "late"} <= set(tmeans.index) else None
+        t_choice = st.radio("When would the dry spell hit?", list(TIMING_CHOICES), horizontal=True, help=timing_help)
         timing = TIMING_CHOICES[t_choice]
 
     est = estimate(df, state, county, crop, level, timing, irrig)
+    lost = None
     if est is None or hist.empty:
         st.info("We do not have enough past years at this drought level to give a fair estimate. Try a nearby level.")
     else:
@@ -514,17 +548,47 @@ def show_dashboard():
         st.plotly_chart(fig, width="stretch")
         st.markdown("Nebraska counties are grouped by whether most of their cropland is irrigated. If you can irrigate, past droughts cost far less.")
     else:
-        st.markdown("Most Iowa cropland is rain-fed rather than irrigated, so drought reaches the crop directly. The numbers above already reflect that.")
+        ia, ne_i, ne_d = (level_loss(df, s_, crop, 4, g) for s_, g in (("IA", None), ("NE", "mostly irrigated"), ("NE", "mostly dryland")))
+        line = (f"Iowa is rain-fed, so drought reaches the crop directly. At extreme drought (D3), Iowa {crop_name} had a {loss_text(ia)}, "
+                f"compared with a {loss_text(ne_i)} in irrigated Nebraska counties and a {loss_text(ne_d)} in dryland Nebraska counties.")
+        st.markdown(line if None not in (ia, ne_i, ne_d) else "Iowa is rain-fed, so drought reaches the crop directly.")
 
     # --- 5. Get ready ------------------------------------------------------
     chapter("Step 5", "Getting ready", "General steps farmers take when drought looks likely. Your county extension office and crop insurance agent can tailor them to your fields.")
     html(f"<div class='photo-band' style='background-image:url(\"{photo('drought.jpg')}\")'></div>"
          "<div class='small'>Drought-damaged corn. USDA photo, public domain.</div>")
+    d1, d2 = level_loss(df, state, crop, 2), level_loss(df, state, crop, 3)
+    tmeans = timing_means(df, crop, state)
+    ne_dry, ne_irr = level_loss(df, "NE", crop, 4, "mostly dryland"), level_loss(df, "NE", crop, 4, "mostly irrigated")
+    ia_loss = level_loss(df, "IA", crop, 4)
+    if lost is not None:
+        insurance = (f"At {LEVEL_NAME[level][0].lower() + LEVEL_NAME[level][1:]} your estimate is about {lost:,.0f} bushels short on {acres:,} acres. "
+                     "Compare that with your coverage and ask when a loss has to be reported.")
+        storage = f"A shortfall of about {lost:,.0f} bushels changes how much grain you store or sell. Revisit contracts early."
+    else:
+        insurance = "Compare your coverage with the loss estimate above and ask when a loss has to be reported."
+        storage = "A yield shortfall changes how much grain you store or sell. Revisit contracts early."
+    if state == "NE" and None not in (ne_dry, ne_irr):
+        water = (f"At extreme drought (D3), Nebraska {crop_name} had a {loss_text(ne_dry)} on dryland "
+                 f"and a {loss_text(ne_irr)} on irrigated ground. If you irrigate, check pumps and schedules early.")
+    elif state == "IA" and ia_loss is not None:
+        water = f"Iowa {crop_name} has no irrigation cushion: at extreme drought (D3) it had a {loss_text(ia_loss)}. Decide early which fields matter most."
+    else:
+        water = "Decide early which fields matter most if water runs short."
+    drought_map = "Watch your county's weekly level on the U.S. Drought Monitor map."
+    if d1 is not None and d2 is not None:
+        drought_map = (f"In {STATE_NAMES[state]}, {crop_name} had a {loss_text(d1)} at moderate drought (D1) and a {loss_text(d2)} at severe drought (D2). "
+                       + drought_map)
+    when = "Know which weeks of the season carry the most risk."
+    if {"peak", "early"} <= set(tmeans.index):
+        when = (f"{CROP_NAMES[crop]} in {STATE_NAMES[state]} {'has' if crop == 'CORN' else 'have'} averaged {tmeans['peak']:+.0f}% against trend when severe drought hit in July and August, "
+                f"versus {tmeans['early']:+.0f}% in May and June. " + when)
     actions = [
-        ("Talk to your crop insurance agent", "Confirm your coverage and the dates for reporting a loss before the dry spell, not after."),
-        ("Plan your water", "If you irrigate, check pumps and schedules early. If you farm dryland, decide where to put your effort."),
-        ("Watch the weekly drought map", "The U.S. Drought Monitor updates every Thursday. Moving from D1 to D2 is when losses start to climb."),
-        ("Line up storage and marketing", f"A {abs(loss) if est else 0:.0f}% shortfall changes how much grain you have to store or sell. Revisit contracts early." if est else "A yield shortfall changes how much grain you have to store or sell."),
+        ("Talk to your crop insurance agent", insurance),
+        ("Plan your water", water),
+        ("Watch the weekly drought map", drought_map),
+        ("Know your risky weeks", when),
+        ("Line up storage and marketing", storage),
         ("Call your county extension office", "They know local conditions and can point you to drought assistance programs."),
     ]
     html("".join(f"<div class='action'><div class='num'>{i}</div><div><b>{t}</b>{d}</div></div>" for i, (t, d) in enumerate(actions, 1)))
