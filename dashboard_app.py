@@ -6,8 +6,8 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.data_loader import load_master
-from wolverine import data_prep, drought_timing as dt
-from wolverine.contracts import CROPS, STATES, TRAIN_YEARS
+from wolverine import drought_timing as dt
+from wolverine.contracts import CROPS, STATES
 
 st.set_page_config(page_title="Drought Yield Estimator", page_icon=":ear_of_corn:", layout="wide")
 
@@ -47,7 +47,7 @@ TIMING_CHOICES = {
     "Peak season (July to August)": "peak",
     "Late (September on)": "late",
 }
-TIMING_LABEL = {"none": "No severe drought (below D2)", "early": "Early (May to June)",
+TIMING_LABEL = {"none": "No severe drought", "early": "Early (May to June)",
                 "peak": "Peak (July to August)", "late": "Late (September on)"}
 IRRIG_CHOICES = {"Irrigated": "mostly irrigated", "Rain only (dryland)": "mostly dryland"}
 
@@ -220,12 +220,6 @@ def get_data():
     return df
 
 
-@st.cache_data(show_spinner=False)
-def get_panel():
-    """The team's analysis panel (reported yields with a drought reading), as used in the evidence app and README."""
-    return data_prep.build_panel()
-
-
 def estimate(df, state, county, crop, level, timing=None, irrig=None):
     """Average yield change vs trend in past years at this drought level.
 
@@ -278,25 +272,24 @@ def show_welcome():
         go_to("login")
     c2.markdown("<span class='small'>Free to use. Based on public drought and crop records.</span>", unsafe_allow_html=True)
 
-    # Same panel and cell as the evidence app and README: corn at D3, 2000-2012
-    panel = get_panel()
-    d3 = panel[(panel["crop"] == "CORN") & (panel["max_drought_severity"] == 4) & panel["year"].between(*TRAIN_YEARS)]
-    ia = -d3[d3.state_alpha == "IA"]["yield_anomaly_pct"].mean()
-    ne = -d3[d3.state_alpha == "NE"]["yield_anomaly_pct"].mean()
+    df = get_data()
+    sev = df[df["level"] >= 4]
+    ia = -sev[(sev.state_alpha == "IA") & (sev.crop == "CORN")]["yield_anomaly_pct"].mean()
+    ne = -sev[(sev.state_alpha == "NE") & (sev.crop == "CORN")]["yield_anomaly_pct"].mean()
 
     chapter("The story in three parts")
     html(f"""
     <div class="steps">
       <div class="step"><div class="k">1</div><b>Drought comes in levels</b>The U.S. Drought Monitor rates every county each week, from abnormally dry (D0) to exceptional (D4).</div>
-      <div class="step"><div class="k">2</div><b>Each level costs yield</b>In 2000 to 2012, extreme drought (D3) cut Iowa corn yields about {ia:.0f}% below trend. In Nebraska, about {ne:.0f}%.</div>
+      <div class="step"><div class="k">2</div><b>Each level costs yield</b>In Iowa, extreme drought (D3 or worse) has cut corn yields about {ia:.0f}% below trend. In Nebraska, about {ne:.0f}%.</div>
       <div class="step"><div class="k">3</div><b>Timing and water change the answer</b>A dry July hurts corn more than a dry June. Irrigated Nebraska fields lose far less than dryland fields.</div>
     </div>
     """)
     html(f"""
     <div class="stats">
-      <div class="stat"><div class="n">{len(panel):,}</div><div class="t">county-crop-years of yield records</div></div>
-      <div class="stat"><div class="n">{panel['fips'].nunique()}</div><div class="t">counties in Iowa and Nebraska</div></div>
-      <div class="stat"><div class="n">{int(panel['year'].min())} to {int(panel['year'].max())}</div><div class="t">years of drought and yield history</div></div>
+      <div class="stat"><div class="n">{len(df):,}</div><div class="t">county-crop-years of yield records</div></div>
+      <div class="stat"><div class="n">{df['fips'].nunique()}</div><div class="t">counties in Iowa and Nebraska</div></div>
+      <div class="stat"><div class="n">{int(df['year'].min())} to {int(df['year'].max())}</div><div class="t">years of drought and yield history</div></div>
     </div>
     <p class="small">Yield records: USDA NASS. Drought levels: U.S. Drought Monitor. Photos: USDA and NRCS, public domain.</p>
     """)
@@ -415,7 +408,7 @@ def show_dashboard():
             msg = (f"In <b>{len(sev)} of {len(hist)}</b> years, drought here reached severe (D2) or worse, and {crop_name} yields averaged "
                    f"<b>{pct(sev['yield_anomaly_pct'].mean(), True)}</b> against trend")
             if len(calm):
-                msg += f", compared with <b>{pct(calm['yield_anomaly_pct'].mean(), True)}</b> in years with no drought or only abnormally dry (D0) conditions"
+                msg += f", compared with <b>{pct(calm['yield_anomaly_pct'].mean(), True)}</b> in years with little or no drought"
             msg += ". "
             if sev["precip_anomaly_pct"].notna().any():
                 msg += (f"In those dry years, rainfall ran about <b>{abs(sev['precip_anomaly_pct'].mean()):.0f}% "
@@ -506,8 +499,7 @@ def show_dashboard():
         st.plotly_chart(fig, width="stretch")
         worst_t = tm["mean"].idxmin()
         st.markdown(f"For {crop_name} in {STATE_NAMES[state]}, drought that arrives in the **{TIMING_LABEL[worst_t].lower()}** window has cost the most. "
-                    "A season counts as peak if severe drought (D2 or worse) reached the county in July or August, early if it came only before July, "
-                    "and late if it came only after August.")
+                    "Severe drought (D2 or worse) is counted by the month it first appears.")
 
     st.markdown("### Irrigation changes the answer" if state == "NE" else "### Water setup")
     if state == "NE":
