@@ -36,6 +36,7 @@ Caveat: `yield_anomaly_pct` uses a trend fitted on all 26 years, so that test is
 | **Tolu** (owner, integrator) | `tolu` | `wolverine/__init__.py`, `wolverine/contracts.py`, `wolverine_app.py`, `scripts/smoke_check.py`, `README.md`, `docs/team/*` plan files |
 | **Ralph** (RRR-Reyes) | `ralph` | `wolverine/data_prep.py`, `wolverine/reality_table.py`, `docs/team/ralph_notes.md`, `notebooks/ralph_scratch.ipynb` |
 | **Connor** (GAMEMONKEI) | `connor` | `wolverine/drought_timing.py`, `docs/team/connor_notes.md`, `notebooks/connor_scratch.ipynb` |
+| **Edaijah Rodriguez** (daejadoll) | `main-dashboard` | `dashboard_app.py`, `assets/*`, `.streamlit/config.toml` (landing page and farmer dashboard) |
 
 **Read-only for everyone:** `src/`, `data/`, `requirements.txt`, the starter `app.py`. Everything we need is already in `requirements.txt`.
 
@@ -75,6 +76,7 @@ TIMING_VALUES = ["none", "early", "peak", "late"]
 2. Commit only your own files, on your own branch.
 3. Before a PR: `git fetch origin && git merge origin/main`. Files don't overlap, so this is always clean.
 4. Only Tolu merges into `main`, and runs `python scripts/smoke_check.py` after each merge.
+   Exception: Edaijah's three dashboard commits (Sat evening) went straight to `main`, with the team's authorization. Tolu ran the smoke check and tested both apps afterwards.
 
 ## 5. Timeline (Sat Oct 17 → submission Sun noon)
 
