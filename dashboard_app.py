@@ -315,7 +315,7 @@ def show_welcome():
     html(f"""
     <div class="stats">
       <div class="stat"><div class="n">{len(df):,}</div><div class="t">county-crop-years of yield records</div></div>
-      <div class="stat"><div class="n">{df['fips'].nunique()}</div><div class="t">counties in Iowa and Nebraska</div></div>
+      <div class="stat"><div class="n">{df['fips'].nunique()}</div><div class="t">Iowa and Nebraska counties with yield records</div></div>
       <div class="stat"><div class="n">{int(df['year'].min())} to {int(df['year'].max())}</div><div class="t">years of drought and yield history</div></div>
     </div>
     <p class="small">Yield records: USDA NASS. Drought levels: U.S. Drought Monitor. Photos: USDA and NRCS, public domain.</p>
