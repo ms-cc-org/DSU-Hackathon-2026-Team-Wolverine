@@ -1,15 +1,18 @@
 import base64
+from html import escape
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-from src.data_loader import load_master
-from wolverine import data_prep, drought_timing as dt
-from wolverine.contracts import CROPS, STATES, TRAIN_YEARS
+from src.data_loader import load_master, load_irrigation
+from wolverine import data_prep, drought_timing as dt, reality_table as rt
+from wolverine.contracts import CROPS, STATES, TRAIN_YEARS, TEST_YEARS, TOLERANCE_PTS, MIN_CELL_N, STRICT_ANOM
 
-st.set_page_config(page_title="Drought Yield Estimator", page_icon=":ear_of_corn:", layout="wide")
+st.set_page_config(page_title="Drought Category Reality Check", page_icon=":ear_of_corn:", layout="wide")
 
 # ---------------------------------------------------------------------------
 # Design tokens
@@ -25,7 +28,7 @@ MUTED = "#5B6157"
 RULE = "#D5D9C8"
 
 # Drought severity scale: green (fine) to deep red (exceptional).
-LEVELS = [
+DROUGHT_LEVELS = [
     # level, label, short, colour, what it means on the farm
     (0, "No drought", "None", "#4F7D4F", "Normal moisture."),
     (1, "Abnormally dry (D0)", "D0", "#C2BE5A", "Going into drought. Crops may begin to stress."),
@@ -34,13 +37,32 @@ LEVELS = [
     (4, "Extreme drought (D3)", "D3", "#B5402E", "Major crop losses. Widespread water shortages."),
     (5, "Exceptional drought (D4)", "D4", "#7A2417", "Exceptional and widespread losses."),
 ]
-LEVEL_NAME = {lv: name for lv, name, *_ in LEVELS}
-LEVEL_COLOR = {lv: c for lv, _, _, c, _ in LEVELS}
-LEVEL_SHORT = {lv: s for lv, _, s, *_ in LEVELS}
+LEVEL_NAME = {lv: name for lv, name, *_ in DROUGHT_LEVELS}
+LEVEL_COLOR = {lv: c for lv, _, _, c, _ in DROUGHT_LEVELS}
+LEVEL_SHORT = {lv: s for lv, _, s, *_ in DROUGHT_LEVELS}
 
 STATE_NAMES = {"IA": "Iowa", "NE": "Nebraska"}
+IRRIG_LABEL = {"mostly irrigated": "irrigated counties", "mostly dryland": "dryland counties"}
 CROP_NAMES = {"CORN": "Corn", "SOYBEANS": "Soybeans"}
-CROP_BLURB = {"CORN": "Grain corn, bushels per acre", "SOYBEANS": "Soybeans, bushels per acre"}
+# The dataset records every crop in bushels per acre. Corn is shown in tons per acre:
+# a bushel of shelled corn is 56 pounds and a ton is 2,000 pounds. Soybeans stay in bushels.
+YIELD_UNITS = {
+    "CORN": {"per_acre": "tons per acre", "short": "tons/ac", "total": "tons", "factor": 56 / 2000, "digits": 2},
+    "SOYBEANS": {"per_acre": "bushels per acre", "short": "bu/ac", "total": "bushels", "factor": 1.0, "digits": 0},
+}
+CROP_BLURB = {k: f"{'Grain corn' if k == 'CORN' else 'Soybeans'}, {u['per_acre']}" for k, u in YIELD_UNITS.items()}
+
+
+def per_acre(crop, bushels, signed=False):
+    """A yield in bushels per acre, as the farmer's unit: tons/ac for corn, bu/ac for soybeans."""
+    u = YIELD_UNITS[crop]
+    return f"{bushels * u['factor']:{'+' if signed else ''}.{u['digits']}f} {u['short']}"
+
+
+def total_amount(crop, bushels):
+    """A quantity in bushels, as the farmer's unit: tons for corn, bushels for soybeans."""
+    u = YIELD_UNITS[crop]
+    return f"{bushels * u['factor']:,.0f} {u['total']}"
 TIMING_CHOICES = {
     "Not sure": None,
     "Early (May to June)": "early",
@@ -51,8 +73,6 @@ TIMING_LABEL = {"none": "No severe drought (below D2)", "early": "Early (May to 
                 "peak": "Peak (July to August)", "late": "Late (September on)"}
 IRRIG_CHOICES = {"Irrigated": "mostly irrigated", "Rain only (dryland)": "mostly dryland"}
 
-MIN_COUNTY_N = 5    # fewer matching county-years than this and we widen to the state
-MIN_STATE_N = 10
 
 # Demo accounts only: replace with a real user store before sharing outside the team.
 DEMO_USERS = {"farmer": "wolverine", "demo": "demo"}
@@ -195,6 +215,24 @@ div[data-testid="stAlert"] {{ border-radius: 4px; }}
 .action b {{ display: block; }}
 div[data-testid="stMetric"] {{ border-left: 3px solid {FOREST}; padding-left: .9rem; }}
 div[data-testid="stMetricValue"] {{ font-family: 'Fraunces', Georgia, serif; color: {FOREST_DK}; }}
+.vt {{ width: 100%; border-collapse: collapse; margin: .4rem 0 1rem; font-size: 1.05rem; }}
+.vt th {{ text-align: left; font-size: .85rem; letter-spacing: .06em; text-transform: uppercase; color: {MUTED}; border-bottom: 2px solid {RULE}; padding: .4rem .5rem; }}
+.vt td {{ border-bottom: 1px solid {RULE}; padding: .6rem .5rem; vertical-align: top; }}
+.ok {{ color: {FOREST}; font-weight: 700; }}
+.miss {{ color: #B5402E; font-weight: 700; }}
+.na {{ color: {MUTED}; font-weight: 700; }}
+.quote {{ border: 1px solid {RULE}; border-left: 6px solid {FOREST}; border-radius: 4px; background: {PAPER}; padding: 1rem 1.2rem;
+  font-family: 'Fraunces', Georgia, serif; font-size: 1.35rem; line-height: 1.4; color: {FOREST_DK}; margin: .8rem 0 1rem; }}
+.q {{ display: flex; gap: .8rem; align-items: flex-start; margin: 2rem 0 .4rem; padding-top: 1.2rem; border-top: 1px solid {RULE}; }}
+.q .qtext {{ font-family: 'Fraunces', Georgia, serif; font-size: 1.35rem; font-weight: 700; line-height: 1.3; color: {FOREST_DK}; }}
+.q .qn {{ display: block; font-family: 'Source Sans 3', sans-serif; font-size: .85rem; letter-spacing: .09em; text-transform: uppercase; color: {MUTED}; font-weight: 700; }}
+.tip {{ position: relative; flex: none; display: inline-flex; align-items: center; justify-content: center; width: 1.7rem; height: 1.7rem; margin-top: .15rem;
+  border: 2px solid {FOREST}; border-radius: 50%; background: {PAPER}; color: {FOREST}; font: 700 1rem 'Source Sans 3', sans-serif; cursor: help; }}
+.tip:hover, .tip:focus {{ background: {FOREST}; color: #fff; outline: none; }}
+.tip .tipbody {{ visibility: hidden; opacity: 0; position: absolute; left: 0; top: 2.2rem; z-index: 100; width: min(24rem, 78vw); padding: .8rem 1rem;
+  background: {CHARCOAL}; color: {CREAM}; border-radius: 4px; font: 400 .98rem/1.5 'Source Sans 3', sans-serif; text-align: left; transition: opacity .12s; }}
+.tip:hover .tipbody, .tip:focus .tipbody {{ visibility: visible; opacity: 1; }}
+@media (max-width: 760px) {{ .vt {{ font-size: .95rem; overflow-x: auto; display: block; }} .quote {{ font-size: 1.15rem; }} }}
 </style>
 """)
 
@@ -205,57 +243,181 @@ def go_to(page):
 
 
 # ---------------------------------------------------------------------------
-# Data
+# Data: the team's analysis (wolverine/), the same tables the evidence app shows
 # ---------------------------------------------------------------------------
-@st.cache_data(show_spinner=False)
-def get_data():
-    """County x crop x year records, with drought timing and (Nebraska) irrigation group joined on."""
-    df = load_master()
-    df = df[df["state_alpha"].isin(STATES) & df["crop"].isin(CROPS)]
-    df = df.dropna(subset=["yield_per_acre", "yield_anomaly_pct", "max_drought_severity"]).copy()
-    df["level"] = df["max_drought_severity"].astype(int)
-    df["trend_yield"] = df["yield_per_acre"] / (1 + df["yield_anomaly_pct"] / 100)
-    df = df.merge(dt.drought_timing(), on=["fips", "crop", "year"], how="left")
-    df = df.merge(dt.irrigation_groups(), on=["fips", "crop"], how="left")
-    return df
+OCHRE = "#C98B2B"
+ORANGE = LEVEL_COLOR[3]
+MASTER_TREND = "Master trend (all years)"
+STRICT_TREND = "Strict trend (2000–2012 only)"
+BAR_TEXT = dict(textposition="outside", cliponaxis=False)
 
 
 @st.cache_data(show_spinner=False)
 def get_panel():
-    """The team's analysis panel (reported yields with a drought reading), as used in the evidence app and README."""
-    return data_prep.build_panel()
+    """Reported county yields with a drought reading, plus drought timing and Nebraska irrigation group."""
+    panel = data_prep.add_strict_anomaly(data_prep.build_panel())
+    panel = panel.merge(dt.drought_timing(), on=["fips", "crop", "year"], how="left")
+    return panel.merge(dt.irrigation_groups(), on=["fips", "crop"], how="left")
 
 
-def estimate(df, state, county, crop, level, timing=None, irrig=None):
-    """Average yield change vs trend in past years at this drought level.
+@st.cache_data(show_spinner=False)
+def analysis(crop, anom):
+    """Every table the evidence app builds for one crop and one trend version."""
+    view = get_panel()
+    view = view[view.crop == crop]
+    ne = view[view.state_alpha == "NE"]
+    groups = ["mostly irrigated", "mostly dryland"]
+    irr_table = rt.build_table(ne, TRAIN_YEARS, anom, extra_by=["irrig_group"])
+    irr_check = rt.backtest(ne, anom, extra_by=["irrig_group"])
+    timing = rt.build_table(view, (TRAIN_YEARS[0], TEST_YEARS[1]), anom, extra_by=["timing"])
+    labelled = view.dropna(subset=["timing"])
+    return {
+        "table": rt.build_table(view, TRAIN_YEARS, anom),
+        "check": rt.backtest(view, anom),
+        "irr_table": irr_table[irr_table.irrig_group.isin(groups)],
+        "irr_check": irr_check[irr_check.irrig_group.isin(groups)],
+        "timing": timing[(timing.level == 4) & timing.timing.isin(["early", "peak"])],
+        "d3_timing": view[view.max_drought_severity == 4]["timing"].value_counts(),
+        "timing_years": (int(labelled.year.min()), int(labelled.year.max())),
+        "timing_counties": labelled.fips.nunique(),
+        "coverage": data_prep.coverage_report(view).reset_index(),
+    }
 
-    Starts with the farmer's own county and widens step by step (state, then drop the timing
-    filter, then drop the irrigation filter) until enough past years match. Returns None if nothing does.
-    """
-    base = df[(df["state_alpha"] == state) & (df["crop"] == crop) & (df["level"] == level)]
 
-    def attempt(use_timing, use_irrig, county_only):
-        rows = base
-        if use_irrig and irrig:
-            rows = rows[rows["irrig_group"] == irrig]
-        if use_timing and timing:
-            rows = rows[rows["timing"] == timing]
-        if county_only:
-            rows = rows[rows["county_name"] == county]
-        return rows
+# ---------------------------------------------------------------------------
+# The six questions in the data dictionary, answered from the full master dataset
+# ---------------------------------------------------------------------------
+SEVERE = 3          # max_drought_severity 3 = D2 (severe). The dataset's scale is offset by one from the D-labels.
+SHARP = -5.0        # "sharply negative": an average yield change at or below this many percent
+WEEK_BINS, WEEK_LABELS = [-1, 0, 4, 9, 100], ["None", "1–4 weeks", "5–9 weeks", "10 or more weeks"]
+HEAT_BINS, HEAT_LABELS = [-1, 0, 2, 5, 9, 14, 100], ["0 days", "1–2", "3–5", "6–9", "10–14", "15 or more"]
 
-    steps = [
-        (True, True, True, MIN_COUNTY_N, "your county"),
-        (True, True, False, MIN_STATE_N, f"{STATE_NAMES[state]} counties"),
-        (False, True, False, MIN_STATE_N, f"{STATE_NAMES[state]} counties (any timing)"),
-        (False, False, False, MIN_STATE_N, f"{STATE_NAMES[state]} counties (any timing or water setup)"),
-    ]
-    for use_timing, use_irrig, county_only, need, basis in steps:
-        rows = attempt(use_timing, use_irrig, county_only)
-        if len(rows) >= need:
-            a = rows["yield_anomaly_pct"]
-            return {"mean": a.mean(), "lo": a.quantile(0.25), "hi": a.quantile(0.75), "n": len(rows), "basis": basis}
-    return None
+
+def r_squared(d, y, cols):
+    """Share of the variation in y that a straight-line fit on `cols` explains."""
+    X = np.column_stack([np.ones(len(d))] + [d[c].values for c in cols])
+    beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+    return 1 - (y - X @ beta).var() / y.var()
+
+
+@st.cache_data(show_spinner=False)
+def research(crop):
+    """One result per question. Q1, Q2 and Q6 follow the selected crop; Q3, Q4 and Q5 are fixed comparisons."""
+    m = load_master()
+    m = m[m.yield_status == "reported"].assign(severe=lambda d: d.max_drought_severity >= SEVERE)
+    out = {}
+
+    # Q1: yield change in D2-or-worse seasons, and by weeks spent in D2 or worse
+    q = m[m.state_alpha.isin(["IA", "NE"]) & (m.crop == crop)].dropna(subset=["yield_anomaly_pct", "max_drought_severity", "weeks_in_d2_plus"])
+    out["q1_flag"] = {k: (g.yield_anomaly_pct.mean(), len(g)) for k, g in q.groupby(["state_alpha", "severe"])}
+    out["q1_weeks"] = (q.assign(weeks=pd.cut(q.weeks_in_d2_plus, WEEK_BINS, labels=WEEK_LABELS))
+                        .groupby(["state_alpha", "weeks"], observed=True).yield_anomaly_pct.agg(["mean", "size"]).reset_index())
+
+    # Q2: Iowa only. County drought-year yield change against the soil water it can hold
+    g = (q[(q.state_alpha == "IA") & q.severe].groupby("fips")
+          .agg(change=("yield_anomaly_pct", "mean"), years=("yield_anomaly_pct", "size"), aws=("aws_100cm_mm", "first")))
+    g = g[g.years >= 3].dropna()
+    g["third"] = pd.qcut(g.aws, 3, labels=["Lowest third", "Middle third", "Highest third"])
+    out["q2"] = {"r": np.corrcoef(g.aws, g.change)[0, 1], "counties": len(g),
+                 "thirds": g.groupby("third", observed=True).agg(change=("change", "mean"), aws=("aws", "mean")).reset_index()}
+
+    # Q3: Nebraska, corn vs soybeans vs sorghum in D2-or-worse seasons, plus irrigation and reporting counties
+    ne = m[(m.state_alpha == "NE") & m.crop.isin(["CORN", "SOYBEANS", "SORGHUM"])].dropna(subset=["yield_anomaly_pct", "max_drought_severity"])
+    irr = load_irrigation()
+    irr = irr[irr.state_alpha == "NE"].groupby("crop").irrigated_share.mean()
+    sorghum = m[(m.state_alpha == "NE") & (m.crop == "SORGHUM")].groupby("year").fips.nunique()
+    out["q3"] = {"change": ne[ne.severe].groupby("crop").yield_anomaly_pct.mean(), "irrigated": irr,
+                 "counties": {y: int(sorghum.get(y, 0)) for y in (2000, 2005, 2010, 2015, 2020, 2025)}}
+
+    # Q4: how closely growing-season rain tracks yield change, rain-fed Iowa vs irrigated California
+    out["q4"] = []
+    for state, c, label in (("IA", "CORN", "Iowa corn"), ("IA", "SOYBEANS", "Iowa soybeans"), ("NE", "CORN", "Nebraska corn"), ("CA", "CORN", "California corn")):
+        d = m[(m.state_alpha == state) & (m.crop == c)].dropna(subset=["yield_anomaly_pct", "precip_anomaly_pct"])
+        r = np.corrcoef(d.precip_anomaly_pct, d.yield_anomaly_pct)[0, 1]
+        out["q4"].append({"label": label, "r": r, "r2": r * r, "n": len(d)})
+
+    # Q5: yield change by extreme-heat days (days at or above 35 C), Iowa and Nebraska
+    h = m[m.state_alpha.isin(["IA", "NE"]) & m.crop.isin(["CORN", "SOYBEANS"])].dropna(subset=["yield_anomaly_pct", "extreme_heat_days"])
+    out["q5"] = (h.assign(heat=pd.cut(h.extreme_heat_days, HEAT_BINS, labels=HEAT_LABELS))
+                  .groupby(["crop", "heat"], observed=True).yield_anomaly_pct.agg(["mean", "size"]).reset_index())
+
+    # Q6: of the county-to-county yield gap within a year, how much does soil explain, and how much more does drought?
+    out["q6"] = {}
+    for state in ("IA", "NE"):
+        d = m[(m.state_alpha == state) & (m.crop == crop)].dropna(subset=["yield_per_acre", "nccpi_crop", "weeks_in_d2_plus", "mean_dsci"]).copy()
+        y = (d.yield_per_acre - d.groupby("year").yield_per_acre.transform("mean")).values
+        soil = r_squared(d, y, ["nccpi_crop"])
+        both = r_squared(d, y, ["nccpi_crop", "weeks_in_d2_plus", "mean_dsci"])
+        out["q6"][state] = {"soil": soil, "drought": both - soil, "rest": 1 - both, "n": len(d)}
+    return out
+
+
+def question(n, text, tip):
+    """A question heading with a small hover button that explains how the answer was worked out."""
+    html(f"<div class='q'><span class='tip' tabindex='0' role='button' aria-label='How we worked this out'>?"
+         f"<span class='tipbody'>{escape(tip)}</span></span><div class='qtext'><span class='qn'>Question {n}</span>{escape(text)}</div></div>")
+
+
+def first_bucket(rows, test):
+    """The first heat-day group whose average yield change meets `test`, or None."""
+    hit = rows[test(rows["mean"])]
+    return str(hit.heat.iloc[0]) if len(hit) else None
+
+
+def cell(frame, state, level, group=None):
+    """One row of a backtest table (the 2000-2012 estimate and its 2013-2025 check), or None."""
+    hit = frame[(frame.state_alpha == state) & (frame.level == level)]
+    if group:
+        hit = hit[hit.irrig_group == group]
+    return hit.iloc[0] if len(hit) and hit.iloc[0].train_n > 0 else None
+
+
+def lc_first(text):
+    """Lower-case the first letter only, so 'Extreme drought (D3)' keeps its D-code."""
+    return text[0].lower() + text[1:]
+
+
+def below(v, digits=0):
+    """'17% below normal' for a mean yield change in percent (negative = below)."""
+    return f"{abs(v):.{digits}f}% {'below' if v < 0 else 'above'} normal"
+
+
+def loss_text(v):
+    """'17% loss' or '3% gain' for a mean yield change in percent."""
+    return f"{abs(v):.0f}% {'loss' if v < 0 else 'gain'}"
+
+
+def verdict(row):
+    """(css class, sentence): did the 2000-2012 estimate hold up on 2013-2025?"""
+    if row is None or not row.enough_rows:
+        return "na", f"Too few past years to check (fewer than {MIN_CELL_N} in one period). Don't rely on this number."
+    if row.within_tol:
+        return "ok", f"Held up. 2013–2025 came in at {below(row.test_mean)}, within {TOLERANCE_PTS:g} points."
+    return "miss", f"Missed. 2013–2025 came in at {below(row.test_mean)}, {row.abs_error:.0f} points away. Treat this estimate with care."
+
+
+def typical_yield(panel, state, county, crop):
+    """The county's recent trend yield in a normal year; recent reported yields if its trend is not available."""
+    rows = panel[(panel.state_alpha == state) & (panel.county_name == county) & (panel.crop == crop)].sort_values("year")
+    trend = (rows.yield_per_acre / (1 + rows.yield_anomaly_pct / 100)).dropna()
+    return trend.tail(3).mean() if len(trend) else rows.yield_per_acre.tail(3).mean()
+
+
+def peak_share(a):
+    """Share of D3 seasons in which severe drought reached the county in July or August."""
+    counts = a["d3_timing"]
+    return counts.get("peak", 0) / counts.sum() if counts.sum() else None
+
+
+def layout(fig, height=340):
+    fig.update_layout(
+        height=height, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor=CREAM, plot_bgcolor=CREAM,
+        font=dict(family="Source Sans 3, sans-serif", size=15, color=CHARCOAL),
+        legend=dict(orientation="h", y=-0.2, title_text=""),
+    )
+    fig.update_xaxes(showgrid=False, linecolor=MUTED)
+    fig.update_yaxes(gridcolor=RULE, zeroline=True, zerolinecolor=MUTED)
+    return fig
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +428,8 @@ def show_welcome():
     <div class="hero">
       <div class="copy">
         <div class="eyebrow">Iowa and Nebraska · Corn and soybeans</div>
-        <h1>When the rain stops, what does it cost the harvest?</h1>
-        <p>Pick your county, your crop and a drought level. We show what past droughts did to yields on farms like yours, so you can plan before the season turns.</p>
+        <h1>Same drought label. Same yield loss?</h1>
+        <p>The Drought Monitor gives a county the same label in Iowa and in Nebraska. We checked 26 years of records to see what each level really cost farmers, and whether those numbers held up in later years.</p>
       </div>
       <div class="pic" style="background-image:url('{photo('hero.jpg')}')"></div>
     </div>
@@ -278,24 +440,29 @@ def show_welcome():
         go_to("login")
     c2.markdown("<span class='small'>Free to use. Based on public drought and crop records.</span>", unsafe_allow_html=True)
 
-    # Same panel and cell as the evidence app and README: corn at D3, 2000-2012
-    panel = get_panel()
-    d3 = panel[(panel["crop"] == "CORN") & (panel["max_drought_severity"] == 4) & panel["year"].between(*TRAIN_YEARS)]
-    ia = -d3[d3.state_alpha == "IA"]["yield_anomaly_pct"].mean()
-    ne = -d3[d3.state_alpha == "NE"]["yield_anomaly_pct"].mean()
+    try:
+        with st.spinner("Loading drought and yield records..."):
+            panel, corn = get_panel(), analysis("CORN", "yield_anomaly_pct")
+    except Exception as exc:
+        st.error("We could not load the data files. Ask the team to check the data folder, then refresh this page.")
+        st.caption(f"Technical detail: {exc}")
+        return
+    ia, ne = cell(corn["check"], "IA", 4), cell(corn["check"], "NE", 4)
+    dry, irr = cell(corn["irr_check"], "NE", 4, "mostly dryland"), cell(corn["irr_check"], "NE", 4, "mostly irrigated")
+    share = peak_share(corn)
 
     chapter("The story in three parts")
     html(f"""
     <div class="steps">
-      <div class="step"><div class="k">1</div><b>Drought comes in levels</b>The U.S. Drought Monitor rates every county each week, from abnormally dry (D0) to exceptional (D4).</div>
-      <div class="step"><div class="k">2</div><b>Each level costs yield</b>In 2000 to 2012, extreme drought (D3) cut Iowa corn yields about {ia:.0f}% below trend. In Nebraska, about {ne:.0f}%.</div>
-      <div class="step"><div class="k">3</div><b>Timing and water change the answer</b>A dry July hurts corn more than a dry June. Irrigated Nebraska fields lose far less than dryland fields.</div>
+      <div class="step"><div class="k">1</div><b>Drought comes in levels</b>The U.S. Drought Monitor rates every county each week, from no drought, through abnormally dry (D0), up to exceptional (D4).</div>
+      <div class="step"><div class="k">2</div><b>Each level costs yield, and not the same in each state</b>In 2000 to 2012, extreme drought (D3) cut Iowa corn yields {abs(ia.train_mean):.1f}% below trend. Nebraska corn lost {abs(ne.train_mean):.1f}%.</div>
+      <div class="step"><div class="k">3</div><b>Water and timing explain the gap</b>At D3, Nebraska dryland corn lost {abs(dry.train_mean):.0f}% and irrigated corn {abs(irr.train_mean):.0f}%. {share:.0%} of D3 seasons had severe drought in July or August.</div>
     </div>
     """)
     html(f"""
     <div class="stats">
       <div class="stat"><div class="n">{len(panel):,}</div><div class="t">county-crop-years of yield records</div></div>
-      <div class="stat"><div class="n">{panel['fips'].nunique()}</div><div class="t">counties in Iowa and Nebraska</div></div>
+      <div class="stat"><div class="n">{panel['fips'].nunique()}</div><div class="t">Iowa and Nebraska counties with yield records</div></div>
       <div class="stat"><div class="n">{int(panel['year'].min())} to {int(panel['year'].max())}</div><div class="t">years of drought and yield history</div></div>
     </div>
     <p class="small">Yield records: USDA NASS. Drought levels: U.S. Drought Monitor. Photos: USDA and NRCS, public domain.</p>
@@ -308,9 +475,9 @@ def show_welcome():
 def show_login():
     left, right = st.columns([1, 1], gap="large")
     with left:
-        html(f"<div class='brand'>{icon('CORN', 34)}{icon('SOYBEANS', 34)} Drought Yield Estimator</div>")
+        html(f"<div class='brand'>{icon('CORN', 34)}{icon('SOYBEANS', 34)} Drought Category Reality Check</div>")
         html("<div class='sec' style='margin-top:1rem'><div class='eyebrow'>Sign in</div><h2>Welcome back</h2>"
-             "<p class='lead'>Log in to see your county's drought and yield story.</p></div>")
+             "<p class='lead'>Log in to see what each drought level costs your crop.</p></div>")
         with st.form("login"):
             username = st.text_input("Username")
             password = st.text_input("Password", type="password")
@@ -331,42 +498,48 @@ def show_login():
 # ---------------------------------------------------------------------------
 # Page 3: dashboard
 # ---------------------------------------------------------------------------
-def layout(fig, height=340):
-    fig.update_layout(
-        height=height, margin=dict(t=10, b=10, l=10, r=10), paper_bgcolor=CREAM, plot_bgcolor=CREAM,
-        font=dict(family="Source Sans 3, sans-serif", size=15, color=CHARCOAL),
-        legend=dict(orientation="h", y=-0.2),
-    )
-    fig.update_xaxes(showgrid=False, linecolor=MUTED)
-    fig.update_yaxes(gridcolor=RULE, zeroline=True, zerolinecolor=MUTED)
-    return fig
+def check_table(chk, state):
+    """Plain-language table: the 2000-2012 estimate, what 2013-2025 did, and the verdict, per drought level."""
+    rows = ""
+    for lv, name, _, color, _ in DROUGHT_LEVELS:
+        r = cell(chk, state, lv)
+        if r is None:
+            continue
+        css, text = verdict(r)
+        mark = {"ok": "✓", "miss": "✗", "na": "–"}[css]
+        test = f"{below(r.test_mean)}<br><span class='small'>{r.test_n} county-years</span>" if r.test_n > 0 else "<span class='small'>No records</span>"
+        rows += (f"<tr><td><b>{name}</b></td><td>{below(r.train_mean)}<br><span class='small'>{r.train_n} county-years</span></td>"
+                 f"<td>{test}</td><td class='{css}'>{mark} {text}</td></tr>")
+    return ("<table class='vt'><tr><th>Drought level</th><th>2000–2012 (our estimate)</th><th>2013–2025 (what happened)</th>"
+            f"<th>Did it hold up?</th></tr>{rows}</table>")
 
 
 def show_dashboard():
-    with st.spinner("Loading 26 years of drought and yield records..."):
-        try:
-            df = get_data()
-        except Exception as exc:  # data files missing or a module not merged yet
-            st.error("We could not load the data files. Ask the team to check the data folder, then refresh this page.")
-            st.caption(f"Technical detail: {exc}")
-            return
+    try:
+        with st.spinner("Loading drought and yield records..."):
+            panel = get_panel()
+    except Exception as exc:  # data files missing or an analysis module not merged yet
+        st.error("We could not load the data files. Ask the team to check the data folder, then refresh this page.")
+        st.caption(f"Technical detail: {exc}")
+        return
 
     top = st.columns([5, 1])
-    top[0].markdown(f"<div class='brand'>{icon('CORN', 34)}{icon('SOYBEANS', 34)} Drought Yield Estimator</div>", unsafe_allow_html=True)
+    top[0].markdown(f"<div class='brand'>{icon('CORN', 34)}{icon('SOYBEANS', 34)} Drought Category Reality Check</div>", unsafe_allow_html=True)
     if top[1].button("Log out", width="stretch"):
         for k in ("user", "crop"):
             st.session_state.pop(k, None)
         go_to("welcome")
 
     # --- 1. Your farm ------------------------------------------------------
-    chapter("Step 1", "Tell us about your farm", "Your answers stay on this screen. We use them to find the past years that look most like yours.")
+    chapter("Step 1", "Tell us about your farm", "Your answers stay on this screen. We use them to pick the numbers that match your state, crop and water.")
     c1, c2, c3 = st.columns([1, 1.3, 1])
     state = c1.selectbox("State", STATES, format_func=STATE_NAMES.get)
-    counties = sorted(df[df["state_alpha"] == state]["county_name"].unique())
+
+    crop = st.session_state.setdefault("crop", "CORN")
+    counties = sorted(panel[(panel.state_alpha == state) & (panel.crop == crop)]["county_name"].unique())
     county = c2.selectbox("County", counties, format_func=lambda c: c.replace(" County", ""))
     acres = c3.number_input("Acres planted", min_value=1, max_value=100000, value=160, step=10)
 
-    crop = st.session_state.setdefault("crop", "CORN")
     st.markdown("**Crop**")
     for col, key in zip(st.columns(2), CROPS):
         with col:
@@ -380,171 +553,375 @@ def show_dashboard():
                 st.session_state.crop = key
                 st.rerun()
 
+    crop_name = CROP_NAMES[crop].lower()
+    crop_adj = "corn" if crop == "CORN" else "soybean"      # "soybean yields", not "soybeans yields"
+    crop_verb = "has" if crop == "CORN" else "have"          # "corn has", "soybeans have"
+    county_short = county.replace(" County", "")
+    a = analysis(crop, "yield_anomaly_pct")     # the master trend: what the estimates below use
+    dry, irr = cell(a["irr_check"], "NE", 4, "mostly dryland"), cell(a["irr_check"], "NE", 4, "mostly irrigated")
+
     irrig = None
     if state == "NE":
-        choice = st.radio("How is this field watered?", list(IRRIG_CHOICES), horizontal=True,
-                          help="About half of Nebraska cropland is irrigated. Dryland fields feel drought much harder.")
-        irrig = IRRIG_CHOICES[choice]
+        irrig_help = (f"At extreme drought (D3) in 2000–2012, Nebraska {crop_name} lost {abs(dry.train_mean):.0f}% on dryland counties "
+                      f"and {abs(irr.train_mean):.0f}% on irrigated counties.") if dry is not None and irr is not None else None
+        irrig = IRRIG_CHOICES[st.radio("How is this field watered?", list(IRRIG_CHOICES), horizontal=True, help=irrig_help, key="irrig_choice")]
 
-    county_short = county.replace(" County", "")
-    crop_name = CROP_NAMES[crop].lower()
-    hist = df[(df["state_alpha"] == state) & (df["county_name"] == county) & (df["crop"] == crop)].sort_values("year")
-
-    # --- 2. County story ---------------------------------------------------
-    chapter("Step 2", f"What drought has done in {county_short} County",
-            f"Each dot is one year of {crop_name} yield. Dot colour shows the worst drought level that year. The dashed line is the yield trend without drought.")
-    if hist.empty:
-        st.info(f"We have no {crop_name} yield records for {county_short} County. Try a nearby county or the other crop.")
+    # --- 2. The answer -----------------------------------------------------
+    chapter("Step 2", "Does the same drought level cost the same in Iowa and Nebraska?",
+            f"Each bar is the average {crop_name} yield change, compared with normal for that county, in 2000 to 2012. Below zero means yield lost.")
+    table, check = a["table"], a["check"]
+    d3 = rt.same_meaning(table, level=4, crop=crop)
+    sc = rt.score(check)
+    if d3["same"]:
+        reco = (f"At extreme drought (D3), {crop_name} lost about the same in Iowa ({abs(d3['ia']):.0f}%) and Nebraska ({abs(d3['ne']):.0f}%), "
+                "so one drought trigger can serve both states.")
     else:
-        fig = go.Figure()
-        fig.add_trace(go.Scatter(x=hist["year"], y=hist["trend_yield"], mode="lines", name="Trend",
-                                 line=dict(color=MUTED, dash="dash", width=2)))
-        for lv, name, short, color, _ in LEVELS:
-            sub = hist[hist["level"] == lv]
-            if len(sub):
-                fig.add_trace(go.Scatter(x=sub["year"], y=sub["yield_per_acre"], mode="markers", name=f"{short} {name.split(' (')[0].replace(' drought','')}",
-                                         marker=dict(color=color, size=12, line=dict(color=CHARCOAL, width=1)),
-                                         hovertemplate="%{x}: %{y:.0f} bu/acre<extra></extra>"))
-        layout(fig, 360).update_yaxes(title="Bushels per acre")
-        st.plotly_chart(fig, width="stretch")
+        irr_note = " (much less on irrigated land)" if dry is not None and irr is not None and dry.train_mean - irr.train_mean <= -TOLERANCE_PTS else ""
+        reco = (f"Don't read the drought map the same way in every state: at D3, plan for about a {abs(d3['ia']):.0f}% yield loss on Iowa {crop_name} "
+                f"but about {abs(d3['ne']):.0f}% in Nebraska{irr_note}. These estimates held up on 2013–2025: {sc['share_within_tol']:.0%} of the "
+                f"table's cells landed within {TOLERANCE_PTS:g} points.")
+    html(f"<div class='quote'>{reco}</div>")
+    m1, m2, m3 = st.columns(3)
+    m1.metric("Iowa at D3", below(d3["ia"], 1))
+    m2.metric("Nebraska at D3", below(d3["ne"], 1))
+    m3.metric("Gap", f"{abs(d3['gap']):.1f} points", "about the same" if d3["same"] else "not the same", delta_color="off")
 
-        sev = hist[hist["level"] >= 3]
-        calm = hist[hist["level"] <= 1]
-        worst = hist.loc[hist["yield_anomaly_pct"].idxmin()]
-        if len(sev):
-            msg = (f"In <b>{len(sev)} of {len(hist)}</b> years, drought here reached severe (D2) or worse, and {crop_name} yields averaged "
-                   f"<b>{pct(sev['yield_anomaly_pct'].mean(), True)}</b> against trend")
-            if len(calm):
-                msg += f", compared with <b>{pct(calm['yield_anomaly_pct'].mean(), True)}</b> in years with no drought or only abnormally dry (D0) conditions"
-            msg += ". "
-            if sev["precip_anomaly_pct"].notna().any():
-                msg += (f"In those dry years, rainfall ran about <b>{abs(sev['precip_anomaly_pct'].mean()):.0f}% "
-                        f"{'below' if sev['precip_anomaly_pct'].mean() < 0 else 'above'}</b> normal and the county saw "
-                        f"<b>{sev['extreme_heat_days'].mean():.0f}</b> extreme-heat days on average, versus "
-                        f"<b>{hist['extreme_heat_days'].mean():.0f}</b> across all years. ")
-        else:
-            msg = f"In none of {len(hist)} years did drought here reach severe (D2). "
-        msg += (f"The hardest year was <b>{int(worst['year'])}</b>: <b>{worst['yield_per_acre']:.0f}</b> bushels per acre, "
-                f"{abs(worst['yield_anomaly_pct']):.0f}% below trend, with drought at {LEVEL_NAME[int(worst['level'])].lower()}.")
-        html(f"<div class='callout'>{msg}</div>")
+    fig = go.Figure()
+    for abbr, color in (("IA", FOREST), ("NE", OCHRE)):
+        g = table[table.state_alpha == abbr].sort_values("level")
+        fig.add_trace(go.Bar(x=[LEVEL_SHORT[int(lv)] for lv in g.level], y=g.mean_loss, name=STATE_NAMES[abbr], marker_color=color,
+                             text=[f"{v:.0f}%" for v in g.mean_loss], customdata=g.n,
+                             hovertemplate="%{x}: %{y:.1f}% (%{customdata} county-years)<extra></extra>", **BAR_TEXT))
+    fig.update_layout(barmode="group")
+    layout(fig, 340).update_yaxes(title="Yield compared with normal (%)")
+    st.plotly_chart(fig, width="stretch")
 
-    # --- 3. What if --------------------------------------------------------
-    chapter("Step 3", "What if drought hits this season?", "Move the slider to the drought level you want to plan for. Check the U.S. Drought Monitor for where your county stands today.")
-    level = st.select_slider("Worst drought level this season", options=[lv for lv, *_ in LEVELS], value=3, format_func=LEVEL_NAME.get)
+    # --- 3. Your estimate --------------------------------------------------
+    chapter("Step 3", "What it means for your farm", "Move the slider to the drought level you want to plan for. Check the U.S. Drought Monitor for where your county stands today.")
+    level = st.select_slider("Worst drought level this season", options=[lv for lv, *_ in DROUGHT_LEVELS], value=4, format_func=LEVEL_NAME.get)
     html("<div class='legend'>" + "".join(
         f"<div class='{'on ' if lv == level else ''}{'dark' if lv in (1, 2) else ''}' style='background:{c}'>{s}</div>"
-        for lv, _, s, c, _ in LEVELS) + "</div>")
-    st.markdown(f"**{LEVEL_NAME[level]}.** {LEVELS[level][4]}")
+        for lv, _, s, c, _ in DROUGHT_LEVELS) + "</div>")
+    st.markdown(f"**{LEVEL_NAME[level]}.** {DROUGHT_LEVELS[level][4]}")
 
-    timing = None
-    if level >= 3:
-        t_choice = st.radio("When would the dry spell hit?", list(TIMING_CHOICES), horizontal=True,
-                            help="Corn is most sensitive in July, when it tassels and silks.")
-        timing = TIMING_CHOICES[t_choice]
-
-    est = estimate(df, state, county, crop, level, timing, irrig)
-    if est is None or hist.empty:
-        st.info("We do not have enough past years at this drought level to give a fair estimate. Try a nearby level.")
+    row = cell(a["irr_check"], "NE", level, irrig) if irrig else cell(check, state, level)
+    typical = typical_yield(panel, state, county, crop)
+    lost = None
+    if row is None or pd.isna(typical):
+        st.info(f"We have no past {crop_name} years at this drought level for {STATE_NAMES[state]}"
+                f"{' ' + IRRIG_LABEL[irrig] if irrig else ''}, or no yield record for {county_short} County. Try a nearby level or county.")
     else:
-        typical = hist.sort_values("year").tail(3)["trend_yield"].mean()
-        change = est["mean"]
+        change = row.train_mean
         expected = typical * (1 + change / 100)
         lost = max((typical - expected) * acres, 0)
         loss = -change
-        if loss >= 12:
-            color, verdict = LEVEL_COLOR[4], "Large expected loss. Worth planning for now."
+        if abs(loss) < 0.5:
+            color, tone = LEVEL_COLOR[0], "Yield about normal at this level."
+        elif loss >= 12:
+            color, tone = LEVEL_COLOR[4], "Large expected loss. Worth planning for now."
         elif loss >= 4:
-            color, verdict = LEVEL_COLOR[3], "Some expected loss."
+            color, tone = LEVEL_COLOR[3], "Some expected loss."
         elif loss > 0:
-            color, verdict = LEVEL_COLOR[2], "A small expected loss."
+            color, tone = LEVEL_COLOR[2], "A small expected loss."
         else:
-            color, verdict = LEVEL_COLOR[0], "Past years at this level did not lose yield on average."
-        word = "lower" if loss > 0 else "higher"
-        lo, hi = est["lo"], est["hi"]
+            color, tone = LEVEL_COLOR[0], "Past years at this level did not lose yield on average."
         html(f"""
         <div class="result" style="--c:{color}">
           <div class="head">{icon(crop, 64)}<div>
-            <div class="big">{abs(loss):.0f}% {word} yield</div>
-            <div class="sub">{CROP_NAMES[crop]} in {county_short} County at {LEVEL_NAME[level].lower()} · {verdict}</div>
+            <div class="big">{'About normal' if abs(loss) < 0.5 else f"{abs(loss):.0f}% {'lower' if loss > 0 else 'higher'} yield"}</div>
+            <div class="sub">{CROP_NAMES[crop]} in {STATE_NAMES[state]}{' · ' + IRRIG_LABEL[irrig] if irrig else ''} at {lc_first(LEVEL_NAME[level])} · {tone}</div>
           </div></div>
         </div>""")
         m1, m2, m3 = st.columns(3)
-        m1.metric("Typical yield", f"{typical:.0f} bu/ac", help="Your county's recent trend yield, in a normal year.")
-        m2.metric("Expected yield", f"{expected:.0f} bu/ac", f"{expected - typical:+.0f} bu/ac")
-        m3.metric(f"Bushels at risk on {acres:,} acres", f"{lost:,.0f}")
+        unit = YIELD_UNITS[crop]
+        m1.metric("Typical yield", per_acre(crop, typical),
+                  help=f"{county_short} County's recent trend yield in a normal year, in {unit['per_acre']}."
+                       + (" Corn is shown in tons: one bushel of corn weighs 56 pounds and one ton is 2,000 pounds." if crop == "CORN" else ""))
+        m2.metric("Expected yield", per_acre(crop, expected), per_acre(crop, expected - typical, signed=True))
+        m3.metric(f"{unit['total'].capitalize()} at risk on {acres:,} acres", f"{lost * unit['factor']:,.0f}")
+        css, text = verdict(row)
+        html(f"<div class='callout'><b>Can you trust it?</b> <span class='{css}'>{text}</span></div>")
         st.markdown(
-            f"<span class='small'>Based on <b>{est['n']}</b> past years in {est['basis']}. In half of those years the change was between "
-            f"<b>{pct(lo, True)}</b> and <b>{pct(hi, True)}</b>. This is a historical average, not a forecast.</span>",
-            unsafe_allow_html=True)
+            f"<span class='small'>Based on <b>{row.train_n}</b> county-years in {STATE_NAMES[state]}{' ' + IRRIG_LABEL[irrig] if irrig else ''} "
+            f"from 2000 to 2012. This is an average of past years, not a forecast.</span>", unsafe_allow_html=True)
 
-    # --- 4. What changes the answer ---------------------------------------
-    chapter("Step 4", "What makes it better or worse", "Two things change what drought costs: the loss at each level, and when the dry spell arrives.")
-    st.markdown(f"### Loss grows with each drought level")
-    xs, ys, cs = [], [], []
-    for lv, _, short, c, _ in LEVELS:
-        e = estimate(df, state, county, crop, lv, None, irrig)
-        if e:
-            xs.append(f"{short}" if lv else "None")
-            ys.append(-e["mean"])
-            cs.append(c if lv == level else SAGE)
-    if xs:
-        fig = go.Figure(go.Bar(x=xs, y=ys, marker_color=cs, text=[f"{v:.0f}%" for v in ys], textposition="outside", cliponaxis=False))
-        layout(fig, 320).update_yaxes(title="Average yield loss (%)")
-        st.plotly_chart(fig, width="stretch")
+    # --- 4. Did it hold up? ------------------------------------------------
+    chapter("Step 4", "Did it hold up on years we hadn't used?",
+            "We built the numbers from 2000 to 2012, then checked them against 2013 to 2025. An estimate counts as holding up if later years landed within "
+            f"{TOLERANCE_PTS:g} points of it.")
+    strict = st.session_state.get("trend_version", MASTER_TREND) == STRICT_TREND
+    ck = analysis(crop, STRICT_ANOM if strict else "yield_anomaly_pct")
+    chk = ck["check"]
+    s = rt.score(chk)
+    m1, m2, m3 = st.columns(3)
+    m1.metric(f"Estimates within {TOLERANCE_PTS:g} points", f"{s['share_within_tol']:.0%}")
+    m2.metric("Average miss", f"{s['weighted_mae']:.1f} points")
+    m3.metric("Estimates we could check", f"{s['cells_scored']} of {len(chk)}",
+              help=f"A drought level is checked only when it has at least {MIN_CELL_N} county-years in both periods.")
+    st.markdown(f"**{STATE_NAMES[state]} {crop_name}, drought level by level**")
+    html(check_table(chk, state))
+    g = chk[chk.state_alpha == state].sort_values("level")
+    g = g[g.train_n > 0]
+    fig = go.Figure()
+    for col, label, color, n in (("train_mean", "2000–2012 (our estimate)", FOREST, "train_n"), ("test_mean", "2013–2025 (what happened)", OCHRE, "test_n")):
+        fig.add_trace(go.Bar(x=[LEVEL_SHORT[int(lv)] for lv in g.level], y=g[col], name=label, marker_color=color, customdata=g[n],
+                             text=[f"{v:.0f}%" if pd.notna(v) else "" for v in g[col]],
+                             hovertemplate="%{x}: %{y:.1f}% (%{customdata} county-years)<extra></extra>", **BAR_TEXT))
+    fig.update_layout(barmode="group")
+    layout(fig, 320).update_yaxes(title="Yield compared with normal (%)")
+    st.plotly_chart(fig, width="stretch")
 
-    st.markdown(f"### When the dry spell hits matters")
-    pool = df[(df["state_alpha"] == state) & (df["crop"] == crop)]
-    if irrig:
-        pool = pool[pool["irrig_group"] == irrig]
-    tm = pool.groupby("timing")["yield_anomaly_pct"].agg(["mean", "count"]).reindex(["none", "early", "peak", "late"]).dropna()
+    with st.expander("For the data-curious: every estimate, both states, and a stricter test"):
+        if STRICT_ANOM in panel:
+            st.radio("Trend version", [MASTER_TREND, STRICT_TREND], key="trend_version",
+                     help="Each county's trend line is what 'normal' means. The master trend is fitted on all 26 years, so it sees the later years and flatters the check. "
+                          "The strict trend is fitted on 2000–2012 only, so 2013–2025 is a true out-of-sample test.")
+        shown = pd.DataFrame({
+            "State": chk.state_alpha.map(STATE_NAMES), "Drought level": chk.level_label,
+            "2000–2012 mean (%)": chk.train_mean.round(1), "2000–2012 county-years": chk.train_n,
+            "2013–2025 mean (%)": chk.test_mean.round(1), "2013–2025 county-years": chk.test_n,
+            "Miss (points)": chk.abs_error.round(1),
+            "Did it hold up?": [verdict(r)[1].split(".")[0] for r in chk.itertuples()],
+        })
+        st.dataframe(shown, width="stretch", hide_index=True)
+        pts = chk.dropna(subset=["train_mean", "test_mean"]).assign(State=lambda d: d.state_alpha.map(STATE_NAMES))
+        sc_fig = px.scatter(pts, x="train_mean", y="test_mean", color="State", text="level_label",
+                            color_discrete_map={"Iowa": FOREST, "Nebraska": OCHRE},
+                            labels={"train_mean": "2000–2012 mean (%)", "test_mean": "2013–2025 mean (%)"})
+        lo = float(min(pts.train_mean.min(), pts.test_mean.min())) - 2
+        hi = float(max(pts.train_mean.max(), pts.test_mean.max())) + 2
+        sc_fig.add_trace(go.Scatter(x=[lo, hi, hi, lo], y=[lo + TOLERANCE_PTS, hi + TOLERANCE_PTS, hi - TOLERANCE_PTS, lo - TOLERANCE_PTS],
+                                    fill="toself", fillcolor="rgba(91,97,87,0.15)", line_width=0, name=f"±{TOLERANCE_PTS:g} points", hoverinfo="skip"))
+        sc_fig.add_trace(go.Scatter(x=[lo, hi], y=[lo, hi], mode="lines", line=dict(dash="dash", color=MUTED), name="Same in both periods"))
+        sc_fig.update_traces(textposition="top center", selector=dict(mode="markers+text"))
+        st.plotly_chart(layout(sc_fig, 380), width="stretch")
+        st.caption("Dots inside the shaded band held up. Dots on the dashed line landed exactly where 2000–2012 said they would.")
+
+    # --- 5. Why the states differ -----------------------------------------
+    chapter("Step 5", "Why the same label costs different amounts", "Two things explain most of the gap: when the dry spell arrives, and whether the field can be watered.")
+    st.markdown("### Peak-season drought versus early drought")
+    tm = a["timing"]
     if len(tm):
-        fig = go.Figure(go.Bar(
-            x=[TIMING_LABEL[t] for t in tm.index], y=tm["mean"],
-            marker_color=[FOREST if v >= 0 else LEVEL_COLOR[4] for v in tm["mean"]],
-            text=[f"{v:+.0f}%" for v in tm["mean"]], textposition="outside", cliponaxis=False))
-        layout(fig, 320).update_yaxes(title="Yield vs trend (%)")
-        st.plotly_chart(fig, width="stretch")
-        worst_t = tm["mean"].idxmin()
-        st.markdown(f"For {crop_name} in {STATE_NAMES[state]}, drought that arrives in the **{TIMING_LABEL[worst_t].lower()}** window has cost the most. "
-                    "A season counts as peak if severe drought (D2 or worse) reached the county in July or August, early if it came only before July, "
-                    "and late if it came only after August.")
-
-    st.markdown("### Irrigation changes the answer" if state == "NE" else "### Water setup")
-    if state == "NE":
-        ne = df[(df["state_alpha"] == "NE") & (df["crop"] == crop) & df["irrig_group"].notna()]
         fig = go.Figure()
-        for grp, label, color in [("mostly irrigated", "Irrigated counties", FOREST), ("mostly dryland", "Dryland counties", LEVEL_COLOR[3])]:
-            g = ne[ne["irrig_group"] == grp].groupby("level")["yield_anomaly_pct"].agg(["mean", "count"])
-            g = g[g["count"] >= MIN_STATE_N]
-            fig.add_trace(go.Bar(x=[LEVEL_SHORT[i] if i else "None" for i in g.index], y=-g["mean"], name=label, marker_color=color))
+        for when, label, color in (("peak", "Peak (July to August)", LEVEL_COLOR[4]), ("early", "Early (May to June)", LEVEL_COLOR[2])):
+            g = tm[tm.timing == when]
+            fig.add_trace(go.Bar(x=[STATE_NAMES[x] for x in g.state_alpha], y=g.mean_loss, name=label, marker_color=color, customdata=g.n,
+                                 text=[f"{v:.0f}%" for v in g.mean_loss],
+                                 hovertemplate="%{x}: %{y:.1f}% (%{customdata} county-years)<extra></extra>", **BAR_TEXT))
         fig.update_layout(barmode="group")
-        layout(fig, 320).update_yaxes(title="Average yield loss (%)")
+        layout(fig, 320).update_yaxes(title="Yield compared with normal at D3 (%)")
         st.plotly_chart(fig, width="stretch")
-        st.markdown("Nebraska counties are grouped by whether most of their cropland is irrigated. If you can irrigate, past droughts cost far less.")
-    else:
-        st.markdown("Most Iowa cropland is rain-fed rather than irrigated, so drought reaches the crop directly. The numbers above already reflect that.")
+        share = peak_share(a)
+        thin = tm[(tm.timing == "early") & (tm.n < MIN_CELL_N)]
+        thin_note = (" Early-only D3 seasons are too rare to quote for " + " and ".join(STATE_NAMES[x] for x in thin.state_alpha) +
+                     f" (fewer than {MIN_CELL_N} county-years).") if len(thin) else ""
+        yrs = a["timing_years"]
+        st.markdown(f"**{share:.0%}** of D3 seasons had severe drought (D2 or worse) reach the county in July or August.{thin_note}")
+        st.caption(f"Years {yrs[0]}–{yrs[1]}, {a['timing_counties']} counties with a timing label. "
+                   "Peak means severe drought reached the county in July or August; early means only before July.")
 
-    # --- 5. Get ready ------------------------------------------------------
-    chapter("Step 5", "Getting ready", "General steps farmers take when drought looks likely. Your county extension office and crop insurance agent can tailor them to your fields.")
+    st.markdown("### Nebraska: irrigated versus dryland counties")
+    it = a["irr_table"]
+    if len(it):
+        fig = go.Figure()
+        for grp, label, color in (("mostly irrigated", "Mostly irrigated counties", FOREST), ("mostly dryland", "Mostly dryland counties", ORANGE)):
+            g = it[it.irrig_group == grp].sort_values("level")
+            fig.add_trace(go.Bar(x=[LEVEL_SHORT[int(lv)] for lv in g.level], y=g.mean_loss, name=label, marker_color=color, customdata=g.n,
+                                 text=[f"{v:.0f}%" for v in g.mean_loss],
+                                 hovertemplate="%{x}: %{y:.1f}% (%{customdata} county-years)<extra></extra>", **BAR_TEXT))
+        fig.update_layout(barmode="group")
+        layout(fig, 320).update_yaxes(title="Yield compared with normal (%)")
+        st.plotly_chart(fig, width="stretch")
+        st.caption("Irrigation data runs 2000–2018. Each Nebraska county gets one average irrigated share and is grouped at 50%. Iowa is rain-fed and is not split.")
+
+    # --- 6. Get ready ------------------------------------------------------
+    chapter("Step 6", "Six questions the data answers",
+            "Straight from the same records, for the crop you chose. Hover the ? beside a question to see how we worked it out.")
+    rs = research(crop)
+
+    # Q1
+    question(1, "When a county is in D2 drought or worse during its growing season, how far does yield fall below its own trend?",
+             "We take every Iowa and Nebraska county-year of the crop you chose and flag the ones whose worst drought level that season was D2 (severe) or worse. "
+             "'Below normal' is yield_anomaly_pct: how far that year's yield sat from the county's own 26-year trend line. "
+             "The bars group seasons by how many weeks the county spent in D2 or worse (weeks_in_d2_plus).")
+    f1, w1 = rs["q1_flag"], rs["q1_weeks"]
+    ia10 = w1[(w1.state_alpha == "IA") & (w1.weeks == "10 or more weeks")]
+    html(f"<div class='callout'>When a county reached D2 or worse, {crop_adj} yields averaged <b>{below(f1[('IA', True)][0], 1)}</b> in Iowa "
+         f"({f1[('IA', True)][1]:,} county-years) and <b>{below(f1[('NE', True)][0], 1)}</b> in Nebraska ({f1[('NE', True)][1]:,}). "
+         f"In seasons with less drought they ran {below(f1[('IA', False)][0], 1)} and {below(f1[('NE', False)][0], 1)}."
+         + (f" The longer the drought lasted, the bigger the drop: Iowa {crop_name} with 10 or more weeks in D2 or worse averaged "
+            f"<b>{below(ia10['mean'].iloc[0], 1)}</b>." if len(ia10) else "") + "</div>")
+    fig = go.Figure()
+    for abbr, color in (("IA", FOREST), ("NE", OCHRE)):
+        g = w1[w1.state_alpha == abbr]
+        fig.add_trace(go.Bar(x=g.weeks.astype(str), y=g["mean"], name=STATE_NAMES[abbr], marker_color=color, customdata=g["size"],
+                             text=[f"{v:.0f}%" for v in g["mean"]], hovertemplate="%{x}: %{y:.1f}% (%{customdata} county-years)<extra></extra>", **BAR_TEXT))
+    fig.update_layout(barmode="group")
+    layout(fig, 320).update_yaxes(title="Yield compared with normal (%)").update_xaxes(title="Weeks in D2 drought or worse this season")
+    st.plotly_chart(fig, width="stretch")
+
+    # Q2
+    question(2, "In rain-fed Iowa, do counties with more soil water storage lose less yield in drought years?",
+             "Iowa only, because Iowa is rain-fed. For each Iowa county we averaged its yield change in D2-or-worse seasons (counties with at least 3 such years), "
+             "then split the counties into three equal groups by aws_100cm_mm, the water the top 100 cm of soil can hold. "
+             "Nebraska is left out on purpose: its lowest-storage counties are the most heavily irrigated, so they look drought-resistant for reasons soil data can't show. "
+             "r is the correlation across counties. Near zero means no pattern; the sign shows the direction.")
+    q2 = rs["q2"]
+    r, th = q2["r"], q2["thirds"]
+    strength = "very weak" if abs(r) < 0.2 else "weak" if abs(r) < 0.4 else "moderate"
+    lead = ("No. Counties that hold more soil water did not lose less; if anything they lost a little more." if r <= -0.1 else
+            "A little. Counties that hold more soil water lost somewhat less." if r >= 0.1 else "No clear pattern.")
+    html(f"<div class='callout'><b>{lead}</b> Across {q2['counties']} Iowa counties, {crop_name} in drought years averaged "
+         f"{below(th['change'].iloc[0], 1)} in the lowest-storage third, {below(th['change'].iloc[1], 1)} in the middle third and "
+         f"{below(th['change'].iloc[2], 1)} in the highest-storage third (r = {r:+.2f}, a {strength} link).</div>")
+    fig = go.Figure(go.Bar(x=[f"{t}<br>({a:.0f} mm of water)" for t, a in zip(th.third, th.aws)], y=th.change, marker_color=FOREST,
+                           text=[f"{v:.1f}%" for v in th.change], **BAR_TEXT))
+    layout(fig, 300).update_yaxes(title="Yield compared with normal in drought years (%)")
+    st.plotly_chart(fig, width="stretch")
+
+    # Q3
+    question(3, "In Nebraska, why does sorghum, the drought-tolerant crop, fall further than corn in drought years?",
+             "We compared Nebraska county-years in D2-or-worse seasons for each crop. Irrigated share is each crop's average share of harvested acres that were irrigated "
+             "(NASS irrigation records; sorghum only 2000–2007). We also counted the Nebraska counties with a reported sorghum yield each year. "
+             "The data shows what happened; it can't prove why.")
+    q3 = rs["q3"]
+    ch, ir, cn = q3["change"], q3["irrigated"], q3["counties"]
+    corn_t = analysis("CORN", "yield_anomaly_pct")["irr_check"]
+    dry3, irr3 = cell(corn_t, "NE", 4, "mostly dryland"), cell(corn_t, "NE", 4, "mostly irrigated")
+    lead = "Yes." if ch["SORGHUM"] < ch["CORN"] else "No."
+    html(f"<div class='callout'><b>{lead}</b> In D2-or-worse seasons Nebraska sorghum averaged <b>{below(ch['SORGHUM'], 1)}</b>, "
+         f"corn <b>{below(ch['CORN'], 1)}</b> and soybeans <b>{below(ch['SOYBEANS'], 1)}</b>. "
+         f"Sorghum is mostly grown without irrigation: on average {ir['SORGHUM']:.0%} of its harvested acres were irrigated, against {ir['CORN']:.0%} for corn. "
+         f"Dryland corn counties lost far more at D3 ({abs(dry3.train_mean):.0f}%) than irrigated ones ({abs(irr3.train_mean):.0f}%), which fits sorghum's bigger loss. "
+         f"And few sorghum counties report after 2010: {cn[2000]} in 2000, {cn[2010]} in 2010, {cn[2015]} in 2015 and {cn[2025]} in 2025, "
+         "so recent sorghum results rest on very little data.</div>")
+    order = [c for c in ("CORN", "SOYBEANS", "SORGHUM") if c in ch.index]
+    fig = go.Figure(go.Bar(x=[c.title() for c in order], y=[ch[c] for c in order], marker_color=[FOREST, FOREST, OCHRE][:len(order)],
+                           text=[f"{ch[c]:.1f}%" for c in order], **BAR_TEXT))
+    layout(fig, 300).update_yaxes(title="Yield compared with normal in D2-or-worse seasons (%)")
+    st.plotly_chart(fig, width="stretch")
+
+    # Q4
+    question(4, "Is growing-season rain a stronger predictor of yield in rain-fed Iowa than in irrigated California?",
+             "For each state and crop we measured how closely growing-season rainfall (precip_anomaly_pct) tracks yield change across all county-years. "
+             "The bars show r squared: the share of the yield swings that rainfall alone explains. "
+             "California corn has few county-years, most of them before 2010, so treat that bar as rough.")
+    q4 = {d["label"]: d for d in rs["q4"]}
+    ia_c, ca_c, ne_c = q4["Iowa corn"], q4["California corn"], q4["Nebraska corn"]
+    gap4 = ia_c["r2"] - ca_c["r2"]
+    lead = ("Yes, a little, but rain says little on its own in either place." if gap4 > 0.01 else
+            "Barely. Rain says little on its own in either place." if gap4 > 0 else "No.")
+    html(f"<div class='callout'><b>{lead}</b> Rain explained <b>{ia_c['r2']:.0%}</b> of the year-to-year yield swings in Iowa corn and "
+         f"<b>{ca_c['r2']:.0%}</b> in California corn ({ca_c['n']} county-years)"
+         f"{', where the link even runs slightly the wrong way' if ca_c['r'] < 0 else ''}. "
+         f"Rain mattered most in Nebraska corn, which is partly irrigated: <b>{ne_c['r2']:.0%}</b>.</div>")
+    fig = go.Figure(go.Bar(x=[d["label"] for d in rs["q4"]], y=[d["r2"] * 100 for d in rs["q4"]], marker_color=[FOREST, FOREST, OCHRE, ORANGE],
+                           customdata=[d["n"] for d in rs["q4"]], text=[f"{d['r2']:.0%}" for d in rs["q4"]],
+                           hovertemplate="%{x}: %{y:.1f}% (%{customdata} county-years)<extra></extra>", **BAR_TEXT))
+    layout(fig, 300).update_yaxes(title="Yield swings explained by rain (%)")
+    st.plotly_chart(fig, width="stretch")
+
+    # Q5
+    question(5, "Is there a number of extreme-heat days above which yield turns sharply negative? Does it differ by crop?",
+             "We grouped Iowa and Nebraska county-years by extreme_heat_days (days at or above 35 °C, 95 °F, during the growing season) and averaged the yield change in each group. "
+             f"'Turns negative' is the first group whose average is below zero. 'Sharply' means an average at or below {SHARP:.0f}%. Corn and soybeans only.")
+    q5 = rs["q5"]
+    parts, fig = [], go.Figure()
+    for c, color in (("CORN", OCHRE), ("SOYBEANS", FOREST)):
+        g = q5[q5.crop == c]
+        neg, sharp = first_bucket(g, lambda v: v < 0), first_bucket(g, lambda v: v <= SHARP)
+        parts.append(f"{CROP_NAMES[c]} {'turns' if c == 'CORN' else 'turn'} negative at <b>{neg or 'no group'}</b> hot days and falls sharply at <b>{sharp or 'no group'}</b> "
+                     f"({below(g['mean'].iloc[-1], 1)} in the hottest group)")
+        fig.add_trace(go.Scatter(x=g.heat.astype(str), y=g["mean"], mode="lines+markers", name=CROP_NAMES[c], line=dict(color=color, width=3),
+                                 marker=dict(size=9), customdata=g["size"], hovertemplate="%{x} hot days: %{y:.1f}% (%{customdata} county-years)<extra></extra>"))
+    fig.add_hline(y=SHARP, line_dash="dash", line_color=MUTED, annotation_text=f"{SHARP:.0f}% (sharp loss)", annotation_position="bottom left")
+    layout(fig, 340).update_yaxes(title="Yield compared with normal (%)").update_xaxes(title="Days at or above 35 °C (95 °F) this season")
+    html(f"<div class='callout'>{'. '.join(parts)}. The crops follow a similar path.</div>")
+    st.plotly_chart(fig, width="stretch")
+
+    # Q6
+    question(6, "Once soil quality is accounted for, how much of the yield gap between counties is left for drought to explain?",
+             "Within each year, we compared every county's yield with the average county that year, so the rising trend over time doesn't count. "
+             "First we measured how much of that gap soil quality (nccpi_crop) explains. Then we added drought (weeks in D2 or worse and mean DSCI) and measured how much more it explains. "
+             "Figures are shares of the county-to-county gap. Nebraska is shown too, but irrigation hides much of what soil and drought do there.")
+    q6 = rs["q6"]
+    ia6, ne6 = q6["IA"], q6["NE"]
+    html(f"<div class='callout'>Soil quality explains <b>{ia6['soil']:.1%}</b> of the county-to-county yield gap in Iowa {crop_name}. "
+         f"With soil accounted for, drought explains <b>{ia6['drought']:.1%}</b> more, and about <b>{ia6['rest']:.0%}</b> of the gap is explained by neither. "
+         f"In Nebraska, soil explains {ne6['soil']:.1%} and drought adds {ne6['drought']:.1%}. Drought is a real but small part of the gap between counties.</div>")
+    fig = go.Figure()
+    for key, label, color in (("soil", "Soil quality", FOREST), ("drought", "Drought, added after soil", ORANGE)):
+        fig.add_trace(go.Bar(x=[STATE_NAMES[a] for a in ("IA", "NE")], y=[q6[a][key] * 100 for a in ("IA", "NE")], name=label, marker_color=color,
+                             text=[f"{q6[a][key]:.1%}" for a in ("IA", "NE")], **BAR_TEXT))
+    fig.update_layout(barmode="group")
+    layout(fig, 300).update_yaxes(title="Share of the county-to-county yield gap explained (%)")
+    st.plotly_chart(fig, width="stretch")
+
+    chapter("Step 7", "Getting ready", "General steps farmers take when drought looks likely. Your county extension office and crop insurance agent can tailor them to your fields.")
     html(f"<div class='photo-band' style='background-image:url(\"{photo('drought.jpg')}\")'></div>"
          "<div class='small'>Drought-damaged corn. USDA photo, public domain.</div>")
+    d1, d2 = cell(check, state, 2), cell(check, state, 3)
+    ia_row = cell(check, "IA", 4)
+    share = peak_share(a)
+    insurance = ("Compare your coverage with the loss estimate above and ask when a loss has to be reported." if lost is None else
+                 f"At {lc_first(LEVEL_NAME[level])} your estimate is about {total_amount(crop, lost)} short on {acres:,} acres. "
+                 "Compare that with your coverage and ask when a loss has to be reported.")
+    storage = ("A yield shortfall changes how much grain you store or sell. Revisit contracts early." if lost is None else
+               f"A shortfall of about {total_amount(crop, lost)} changes how much grain you store or sell. Revisit contracts early.")
+    if state == "NE" and dry is not None and irr is not None:
+        water = (f"At extreme drought (D3) in 2000–2012, Nebraska {crop_name} lost {abs(dry.train_mean):.0f}% on dryland and "
+                 f"{abs(irr.train_mean):.0f}% on irrigated ground. If you irrigate, check pumps and schedules early.")
+    elif state == "IA" and ia_row is not None:
+        water = f"Iowa {crop_name} {crop_verb} no irrigation cushion: at extreme drought (D3) it lost {abs(ia_row.train_mean):.0f}%. Decide early which fields matter most."
+    else:
+        water = "Decide early which fields matter most if water runs short."
+    drought_map = "Watch your county's weekly level on the U.S. Drought Monitor map."
+    if d1 is not None and d2 is not None:
+        drought_map = (f"In {STATE_NAMES[state]}, {crop_name} {'lost' if d1.train_mean < 0 else 'gained'} {abs(d1.train_mean):.0f}% at moderate drought (D1) "
+                       f"and {'lost' if d2.train_mean < 0 else 'gained'} {abs(d2.train_mean):.0f}% at severe drought (D2). " + drought_map)
+    when = (f"{share:.0%} of extreme-drought seasons had severe drought reach the county in July or August. Watch those weeks closely."
+            if share is not None else "Know which weeks of the season carry the most risk.")
     actions = [
-        ("Talk to your crop insurance agent", "Confirm your coverage and the dates for reporting a loss before the dry spell, not after."),
-        ("Plan your water", "If you irrigate, check pumps and schedules early. If you farm dryland, decide where to put your effort."),
-        ("Watch the weekly drought map", "The U.S. Drought Monitor updates every Thursday. Moving from D1 to D2 is when losses start to climb."),
-        ("Line up storage and marketing", f"A {abs(loss) if est else 0:.0f}% shortfall changes how much grain you have to store or sell. Revisit contracts early." if est else "A yield shortfall changes how much grain you have to store or sell."),
+        ("Talk to your crop insurance agent", insurance),
+        ("Plan your water", water),
+        ("Watch the weekly drought map", drought_map),
+        ("Know your risky weeks", when),
+        ("Line up storage and marketing", storage),
         ("Call your county extension office", "They know local conditions and can point you to drought assistance programs."),
     ]
     html("".join(f"<div class='action'><div class='num'>{i}</div><div><b>{t}</b>{d}</div></div>" for i, (t, d) in enumerate(actions, 1)))
 
-    # --- 6. About the data -------------------------------------------------
+    # --- About the data ----------------------------------------------------
     chapter("About the numbers")
-    html(f"""
-    <p class="small">Yield change is measured against each county's own trend, so a normal year is 0%. Estimates average past years with the same drought level,
-    starting with your county and widening to your state when your county has fewer than {MIN_COUNTY_N} matching years.
-    Drought level is the worst weekly U.S. Drought Monitor rating each season. Drought timing and irrigation groups come from the team's analysis modules.
-    Yields: USDA NASS, 2000 to 2025. Photos: USDA and NRCS, public domain, via Wikimedia Commons. Built by Team Wolverine for the Data to Harvest Hackathon.</p>
-    """)
+    st.markdown(f"**How many county-years sit behind each number ({CROP_NAMES[crop]})**")
+    cov = a["coverage"]
+    cov = pd.DataFrame({"State": cov.state_alpha.map(STATE_NAMES), "Drought level": cov.max_drought_severity.map(lambda v: LEVEL_NAME[int(v)]),
+                        "2000–2012": cov.train, "2013–2025": cov.test})
+    st.dataframe(cov, width="stretch", hide_index=True)
+    thin_cells = check[check.train_n < MIN_CELL_N]
+    thin_text = ("".join(f"- {STATE_NAMES[r.state_alpha]} {r.level_label} has only {r.train_n} county-years from 2000–2012. Don't quote it.\n"
+                         for r in thin_cells.itertuples()))
+    st.markdown("**Units.** The dataset records every crop in bushels per acre. Corn is shown here in tons per acre "
+                "(a bushel of shelled corn weighs 56 pounds and a ton is 2,000 pounds, so tons = bushels × 0.028). Soybeans stay in bushels per acre.")
+    st.markdown("**Limitations**")
+    st.markdown(
+        "- Drought level is the season's worst U.S. Drought Monitor category, so a single bad week counts the same as a whole bad season.\n"
+        "- County yields come from USDA NASS surveys. Small counties drop out in some years.\n"
+        "- The strict trend is fitted on 2000–2012 only, so 2013–2025 is a real out-of-sample check. "
+        "The master trend uses all years and flatters the check.\n"
+        "- Irrigation shares run 2000–2018 and are averaged to one value per county.\n"
+        "- Estimates are averages of past years, not forecasts.\n" + thin_text)
+    st.markdown("**Credits**")
+    st.markdown(
+        "- **U.S. Drought Monitor:** The U.S. Drought Monitor is jointly produced by the National Drought "
+        "Mitigation Center at the University of Nebraska-Lincoln, the United States Department of Agriculture, "
+        "and the National Oceanic and Atmospheric Administration.\n"
+        "- **USDA NASS:** This product uses the NASS API but is not endorsed or certified by NASS.\n"
+        "- **NOAA ACIS:** Weather data from the Applied Climate Information System (ACIS), NOAA Regional Climate Centers.\n"
+        "- **Soil:** Soil Survey Staff, Natural Resources Conservation Service, United States Department of "
+        "Agriculture. Soil Survey Geographic (SSURGO) Database, via Soil Data Access.\n"
+        "- **Photos:** USDA and NRCS, public domain, via Wikimedia Commons.")
+    html("<p class='small'>Built by Team Wolverine for the Data to Harvest Hackathon, Delaware State University.</p>")
 
 
 page = st.session_state.get("page", "welcome")
